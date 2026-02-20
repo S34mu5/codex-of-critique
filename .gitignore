@@ -1,0 +1,18 @@
+# IDE
+.idea/
+
+# Environment
+.env
+.env.local
+
+# Dependencies
+/vendor/
+
+# Laravel Zero
+/builds/
+
+# Output
+/output/*.md
+
+# OS
+.DS_Store
