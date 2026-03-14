@@ -1,0 +1,32 @@
+query PullRequestsPage($owner: String!, $name: String!, $after: String) {
+  repository(owner: $owner, name: $name) {
+    id
+    pullRequests(
+      first: 50
+      after: $after
+      orderBy: { field: UPDATED_AT, direction: ASC }
+      states: [OPEN, CLOSED, MERGED]
+    ) {
+      pageInfo {
+        hasNextPage
+        endCursor
+      }
+      nodes {
+        id
+        number
+        title
+        createdAt
+        updatedAt
+        mergedAt
+        state
+        reviewDecision
+        author { login }
+      }
+    }
+  }
+  rateLimit {
+    cost
+    remaining
+    resetAt
+  }
+}

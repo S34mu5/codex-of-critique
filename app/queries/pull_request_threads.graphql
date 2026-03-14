@@ -1,0 +1,74 @@
+query PullRequestThreads(
+  $owner: String!,
+  $name: String!,
+  $number: Int!,
+  $after: String
+) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      id
+      number
+      title
+      author { login }
+
+      reviewThreads(first: 50, after: $after) {
+        pageInfo {
+          hasNextPage
+          endCursor
+        }
+        nodes {
+          id
+          isResolved
+          isOutdated
+          path
+          line
+          startLine
+          originalLine
+          originalStartLine
+          diffSide
+          startDiffSide
+          comments(first: 50) {
+            pageInfo {
+              hasNextPage
+              endCursor
+            }
+            nodes {
+              id
+              databaseId
+              body
+              bodyText
+              createdAt
+              lastEditedAt
+              author { login }
+              authorAssociation
+              diffHunk
+              path
+              line
+              originalLine
+              commit {
+                oid
+                authoredDate
+                author {
+                  name
+                  email
+                  user { login }
+                }
+              }
+              pullRequestReview {
+                id
+                state
+                submittedAt
+                author { login }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  rateLimit {
+    cost
+    remaining
+    resetAt
+  }
+}

@@ -1,0 +1,34 @@
+query BlameForFile(
+  $owner: String!,
+  $name: String!,
+  $expr: String!,
+  $path: String!
+) {
+  repository(owner: $owner, name: $name) {
+    object(expression: $expr) {
+      ... on Commit {
+        oid
+        blame(path: $path) {
+          ranges {
+            startingLine
+            endingLine
+            commit {
+              oid
+              authoredDate
+              author {
+                name
+                email
+                user { login }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  rateLimit {
+    cost
+    remaining
+    resetAt
+  }
+}
