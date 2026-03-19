@@ -1,0 +1,42 @@
+query PullRequestExtras($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      reviews(first: 100) {
+        nodes {
+          id
+          state
+          body
+          submittedAt
+          author { login }
+        }
+      }
+      comments(first: 100) {
+        nodes {
+          id
+          databaseId
+          body
+          createdAt
+          lastEditedAt
+          author { login }
+          authorAssociation
+        }
+      }
+      commits(last: 1) {
+        nodes {
+          commit {
+            committedDate
+          }
+        }
+      }
+      reviewRequests(first: 20) {
+        nodes {
+          requestedReviewer {
+            ... on User { login }
+            ... on Team { name }
+          }
+        }
+      }
+    }
+  }
+  rateLimit { cost remaining resetAt }
+}

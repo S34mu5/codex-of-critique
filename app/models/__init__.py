@@ -6,6 +6,9 @@ from app.models.review_comment import ReviewComment
 from app.models.code_authorship import CodeAuthorship
 from app.models.code_snippet import CodeSnippet
 from app.models.sync_state import SyncState
+from app.models.pr_review import PrReview
+from app.models.pr_comment import PrComment
+from app.models.review_request import ReviewRequest
 
 __all__ = [
     "Base",
@@ -16,4 +19,7 @@ __all__ = [
     "CodeAuthorship",
     "CodeSnippet",
     "SyncState",
+    "PrReview",
+    "PrComment",
+    "ReviewRequest",
 ]

@@ -1,22 +1,47 @@
 import asyncio
 import json
+import logging
+import threading
 import time
 from datetime import datetime
 from typing import Optional
 
 import httpx
 import uvicorn
+from croniter import croniter
 from fastapi import FastAPI, Query
 from fastapi.responses import HTMLResponse, StreamingResponse
 from sqlalchemy import text
 
 from app.config import settings
 from app.db import SessionLocal
+from app.services.sync_service import run_repository_sync
 
 app = FastAPI(title="Codex-of-Critique Dashboard")
 
 _gh_cache: dict = {"total_prs": None, "cached_at": 0}
 _GH_CACHE_TTL = 600
+_sync_lock = threading.Lock()
+_sync_progress: dict = {"total_prs": 0, "processed_prs": 0, "current_pr": None, "phase": "idle"}
+
+
+class _SyncProgressHandler(logging.Handler):
+    """Captures sync service log messages to update progress."""
+
+    def emit(self, record: logging.LogRecord) -> None:
+        msg = record.msg
+        if msg == "sync_start":
+            _sync_progress.update(total_prs=0, processed_prs=0, current_pr=None, phase="fetching_prs")
+        elif msg == "sync_prs_done":
+            _sync_progress["total_prs"] = getattr(record, "count", 0)
+            _sync_progress["phase"] = "processing_prs"
+        elif msg == "pr_extras_synced":
+            _sync_progress["current_pr"] = getattr(record, "pr", None)
+            _sync_progress["processed_prs"] += 1
+        elif msg == "sync_pr_error":
+            _sync_progress["processed_prs"] += 1
+        elif msg in ("sync_complete", "sync_fatal_error"):
+            _sync_progress.update(phase="idle", current_pr=None)
 
 
 async def _fetch_github_total_prs() -> int | None:
@@ -108,6 +133,15 @@ async def _build_stats() -> dict:
             if isinstance(v, datetime):
                 item[k] = v.isoformat()
 
+    next_sync = None
+    last_success = sync.get("last_success_at")
+    if last_success and isinstance(last_success, datetime):
+        try:
+            cron = croniter(settings.sync_cron, last_success)
+            next_sync = cron.get_next(datetime).isoformat()
+        except Exception:
+            pass
+
     return {
         "ts": now.isoformat(),
         "tables": counts,
@@ -116,6 +150,13 @@ async def _build_stats() -> dict:
             "last_error_at": iso(sync.get("last_error_at")),
             "last_error_message": sync.get("last_error_message"),
             "last_pr_updated_at": iso(sync.get("last_pr_updated_at")),
+            "next_sync_at": next_sync,
+            "cron": settings.sync_cron,
+            "manual_running": _sync_lock.locked(),
+            "progress_phase": _sync_progress["phase"],
+            "progress_total": _sync_progress["total_prs"],
+            "progress_done": _sync_progress["processed_prs"],
+            "progress_current_pr": _sync_progress["current_pr"],
         },
         "github": {
             "total_prs": total_prs,
@@ -126,7 +167,7 @@ async def _build_stats() -> dict:
             "phase": phase,
             "phase_label": phase_label,
             "pr_pct": pr_pct,
-            "is_active": is_active,
+            "is_active": is_active or _sync_lock.locked(),
             "active_secs_ago": round(active_secs),
         },
         "activity": activity,
@@ -154,6 +195,40 @@ async def stream() -> StreamingResponse:
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+@app.post("/api/sync/trigger")
+def trigger_sync() -> dict:
+    if not _sync_lock.acquire(blocking=False):
+        return {"status": "already_running"}
+
+    _sync_progress.update(total_prs=0, processed_prs=0, current_pr=None, phase="starting")
+    handler = _SyncProgressHandler()
+    handler.setLevel(logging.DEBUG)
+    logging.getLogger().setLevel(logging.INFO)
+    sync_logger = logging.getLogger("app.services.sync_service")
+    extras_logger = logging.getLogger("app.services.pr_extras_service")
+    sync_logger.setLevel(logging.DEBUG)
+    extras_logger.setLevel(logging.DEBUG)
+    sync_logger.addHandler(handler)
+    extras_logger.addHandler(handler)
+
+    def _run():
+        try:
+            run_repository_sync()
+        finally:
+            sync_logger.removeHandler(handler)
+            extras_logger.removeHandler(handler)
+            _sync_progress.update(phase="idle", current_pr=None)
+            _sync_lock.release()
+
+    threading.Thread(target=_run, daemon=True).start()
+    return {"status": "started"}
+
+
+@app.get("/api/sync/status")
+def sync_status() -> dict:
+    return {"running": _sync_lock.locked()}
 
 
 @app.get("/api/filters")
@@ -245,6 +320,185 @@ def search(
             results.append(r)
 
     return {"total": total, "page": page, "per_page": per_page, "results": results}
+
+
+@app.get("/api/activity")
+def activity(
+    username: Optional[str] = Query(None),
+    category: Optional[str] = Query(None),
+    page: int = Query(1, ge=1),
+    per_page: int = Query(20, ge=1, le=100),
+) -> dict:
+    offset = (page - 1) * per_page
+    params: dict = {"username": username or "", "limit": per_page, "offset": offset}
+    result: dict = {}
+
+    with SessionLocal() as session:
+        # --- Pending reviews ---
+        if not category or category == "pending_reviews":
+            if category == "pending_reviews":
+                result["total"] = session.execute(text("""
+                    SELECT COUNT(*) FROM review_requests rr
+                    JOIN pull_requests pr ON pr.id = rr.pull_request_id
+                    WHERE pr.state = 'OPEN' AND rr.status = 'pending'
+                      AND (:username = '' OR rr.requested_reviewer_login = :username)
+                """), params).scalar()
+            rows = session.execute(text("""
+                SELECT pr.number AS pr_number, pr.title AS pr_title,
+                       pr.updated_at_github, pr.author_login AS pr_author,
+                       rp.name AS repo_name, rp.owner AS repo_owner,
+                       rr.requested_reviewer_login, rr.created_at AS requested_at
+                FROM review_requests rr
+                JOIN pull_requests pr ON pr.id = rr.pull_request_id
+                JOIN repositories rp ON rp.id = pr.repository_id
+                WHERE pr.state = 'OPEN'
+                  AND rr.status = 'pending'
+                  AND (:username = '' OR rr.requested_reviewer_login = :username)
+                ORDER BY pr.updated_at_github DESC
+                LIMIT :limit OFFSET :offset
+            """), params).fetchall()
+            result["pending_reviews"] = [_row_to_dict(r) for r in rows]
+
+        # --- Changes requested — not addressed (no commits since review) ---
+        if not category or category == "changes_not_addressed":
+            rows = session.execute(text("""
+                SELECT DISTINCT pr.number AS pr_number, pr.title AS pr_title,
+                       pr.updated_at_github, rp.name AS repo_name, rp.owner AS repo_owner,
+                       rev.author_login AS reviewer, rev.submitted_at AS review_date
+                FROM pr_reviews rev
+                JOIN pull_requests pr ON pr.id = rev.pull_request_id
+                JOIN repositories rp ON rp.id = pr.repository_id
+                WHERE pr.state = 'OPEN'
+                  AND (:username = '' OR pr.author_login = :username)
+                  AND rev.state = 'CHANGES_REQUESTED'
+                  AND rev.submitted_at = (
+                    SELECT MAX(r2.submitted_at) FROM pr_reviews r2
+                    WHERE r2.pull_request_id = rev.pull_request_id
+                      AND r2.author_login = rev.author_login
+                  )
+                  AND NOT EXISTS (
+                    SELECT 1 FROM review_requests rr
+                    WHERE rr.pull_request_id = pr.id
+                      AND rr.requested_reviewer_login = rev.author_login
+                      AND rr.status = 'pending'
+                  )
+                  AND (pr.last_commit_at IS NULL OR pr.last_commit_at <= rev.submitted_at)
+                ORDER BY rev.submitted_at DESC
+                LIMIT :limit OFFSET :offset
+            """), params).fetchall()
+            result["changes_not_addressed"] = [_row_to_dict(r) for r in rows]
+
+        # --- Changes requested — not re-requested (commits after review, no re-request) ---
+        if not category or category == "changes_forgot_rerequest":
+            rows = session.execute(text("""
+                SELECT DISTINCT pr.number AS pr_number, pr.title AS pr_title,
+                       pr.updated_at_github, rp.name AS repo_name, rp.owner AS repo_owner,
+                       pr.author_login AS pr_author,
+                       rev.author_login AS reviewer, rev.submitted_at AS review_date,
+                       pr.last_commit_at
+                FROM pr_reviews rev
+                JOIN pull_requests pr ON pr.id = rev.pull_request_id
+                JOIN repositories rp ON rp.id = pr.repository_id
+                WHERE pr.state = 'OPEN'
+                  AND rev.state = 'CHANGES_REQUESTED'
+                  AND rev.submitted_at = (
+                    SELECT MAX(r2.submitted_at) FROM pr_reviews r2
+                    WHERE r2.pull_request_id = rev.pull_request_id
+                      AND r2.author_login = rev.author_login
+                  )
+                  AND NOT EXISTS (
+                    SELECT 1 FROM review_requests rr
+                    WHERE rr.pull_request_id = pr.id
+                      AND rr.requested_reviewer_login = rev.author_login
+                      AND rr.status = 'pending'
+                  )
+                  AND pr.last_commit_at > rev.submitted_at
+                ORDER BY pr.last_commit_at DESC
+                LIMIT :limit OFFSET :offset
+            """), params).fetchall()
+            result["changes_forgot_rerequest"] = [_row_to_dict(r) for r in rows]
+
+        # --- Changes requested — addressed (awaiting re-review) ---
+        if not category or category == "changes_addressed":
+            rows = session.execute(text("""
+                SELECT DISTINCT pr.number AS pr_number, pr.title AS pr_title,
+                       pr.updated_at_github, rp.name AS repo_name, rp.owner AS repo_owner,
+                       rev.author_login AS reviewer, rev.submitted_at AS review_date
+                FROM pr_reviews rev
+                JOIN pull_requests pr ON pr.id = rev.pull_request_id
+                JOIN repositories rp ON rp.id = pr.repository_id
+                WHERE pr.state = 'OPEN'
+                  AND (:username = '' OR pr.author_login = :username)
+                  AND rev.state = 'CHANGES_REQUESTED'
+                  AND rev.submitted_at = (
+                    SELECT MAX(r2.submitted_at) FROM pr_reviews r2
+                    WHERE r2.pull_request_id = rev.pull_request_id
+                      AND r2.author_login = rev.author_login
+                  )
+                  AND EXISTS (
+                    SELECT 1 FROM review_requests rr
+                    WHERE rr.pull_request_id = pr.id
+                      AND rr.requested_reviewer_login = rev.author_login
+                      AND rr.status = 'pending'
+                  )
+                ORDER BY rev.submitted_at DESC
+                LIMIT :limit OFFSET :offset
+            """), params).fetchall()
+            result["changes_addressed"] = [_row_to_dict(r) for r in rows]
+
+        # --- Merged PRs ---
+        if not category or category == "changes_merged":
+            if category == "changes_merged":
+                result["total"] = session.execute(text("""
+                    SELECT COUNT(*) FROM pull_requests pr
+                    WHERE pr.state = 'MERGED' AND (:username = '' OR pr.author_login = :username)
+                """), params).scalar()
+            rows = session.execute(text("""
+                SELECT pr.number AS pr_number, pr.title AS pr_title,
+                       pr.merged_at_github, rp.name AS repo_name, rp.owner AS repo_owner
+                FROM pull_requests pr
+                JOIN repositories rp ON rp.id = pr.repository_id
+                WHERE pr.state = 'MERGED'
+                  AND (:username = '' OR pr.author_login = :username)
+                ORDER BY pr.merged_at_github DESC
+                LIMIT :limit OFFSET :offset
+            """), params).fetchall()
+            result["changes_merged"] = [_row_to_dict(r) for r in rows]
+
+        # --- Recent comments ---
+        if not category or category == "comments":
+            rows = session.execute(text("""
+                (SELECT 'comment' AS type, pc.author_login, pc.body,
+                        pc.comment_created_at AS ts,
+                        pr.number AS pr_number, pr.title AS pr_title,
+                        rp.name AS repo_name, rp.owner AS repo_owner
+                 FROM pr_comments pc
+                 JOIN pull_requests pr ON pr.id = pc.pull_request_id
+                 JOIN repositories rp ON rp.id = pc.repository_id
+                 ORDER BY pc.comment_created_at DESC LIMIT 50)
+                UNION ALL
+                (SELECT 'review_comment' AS type, rc.comment_author_login AS author_login,
+                        rc.body, rc.comment_created_at AS ts,
+                        pr.number AS pr_number, pr.title AS pr_title,
+                        rp.name AS repo_name, rp.owner AS repo_owner
+                 FROM review_comments rc
+                 JOIN pull_requests pr ON pr.id = rc.pull_request_id
+                 JOIN repositories rp ON rp.id = rc.repository_id
+                 ORDER BY rc.comment_created_at DESC LIMIT 50)
+                ORDER BY ts DESC
+                LIMIT :limit OFFSET :offset
+            """), params).fetchall()
+            result["comments"] = [_row_to_dict(r) for r in rows]
+
+    return {"username": username, "sections": result, "page": page, "per_page": per_page, "category": category}
+
+
+def _row_to_dict(row) -> dict:
+    d = dict(row._mapping)
+    for k, v in d.items():
+        if isinstance(v, datetime):
+            d[k] = v.isoformat()
+    return d
 
 
 # ---------------------------------------------------------------------------
@@ -400,6 +654,30 @@ header{display:flex;align-items:center;justify-content:space-between;margin-bott
 .snippet-block .snippet-header{padding:6px 16px;background:#161b22;color:var(--muted);font-size:10px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between}
 .snippet-block pre{padding:10px 16px;margin:0;color:var(--text)}
 
+/* ---- ACTIVITY PAGE ---- */
+.activity-bar{background:var(--s1);border:1px solid var(--border);border-radius:14px;padding:20px 24px;display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end;margin-bottom:24px}
+.activity-bar .field{display:flex;flex-direction:column;gap:4px;flex:1;min-width:160px}
+.activity-bar .field label{font-size:10px;text-transform:uppercase;letter-spacing:1px;color:var(--muted);font-weight:600}
+.activity-bar input[type=text],.activity-bar select{background:var(--s2);border:1px solid var(--border);color:var(--text);font-family:var(--mono);font-size:12px;padding:8px 12px;border-radius:8px;outline:none;width:100%}
+.activity-bar input[type=text]:focus,.activity-bar select:focus{border-color:var(--cyan)}
+.activity-section{margin-bottom:28px}
+.activity-section-header{display:flex;align-items:center;gap:10px;margin-bottom:14px}
+.activity-section-title{font-size:10px;font-weight:600;letter-spacing:1.4px;text-transform:uppercase;color:var(--muted)}
+.count-badge{font-family:var(--mono);font-size:10px;background:var(--cyan);color:var(--bg);padding:2px 8px;border-radius:10px;font-weight:700}
+.activity-card{background:var(--s1);border:1px solid var(--border);border-radius:12px;padding:14px 18px;margin-bottom:10px;display:flex;align-items:center;gap:14px;transition:border-color .2s;cursor:pointer;text-decoration:none;color:inherit}
+.activity-card:hover{border-color:var(--blue)}
+.activity-card .ac-pr{font-family:var(--mono);font-size:12px;color:var(--cyan);white-space:nowrap}
+.activity-card .ac-title{font-size:13px;font-weight:500;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.activity-card .ac-meta{font-size:11px;color:var(--muted);font-family:var(--mono);white-space:nowrap}
+.activity-card .ac-repo{font-size:10px;color:var(--muted);font-family:var(--mono);white-space:nowrap}
+.comment-card{background:var(--s1);border:1px solid var(--border);border-radius:12px;padding:14px 18px;margin-bottom:10px;transition:border-color .2s;cursor:pointer;text-decoration:none;color:inherit;display:block}
+.comment-card:hover{border-color:var(--blue)}
+.comment-card .cc-head{display:flex;align-items:center;gap:10px;margin-bottom:6px}
+.comment-card .cc-author{font-weight:600;font-size:12px}
+.comment-card .cc-pr{font-family:var(--mono);font-size:11px;color:var(--cyan)}
+.comment-card .cc-time{font-family:var(--mono);font-size:10px;color:var(--muted);margin-left:auto}
+.comment-card .cc-body{font-size:12px;color:var(--text);line-height:1.5;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
+
 .empty-state{text-align:center;padding:60px 20px;color:var(--muted);font-family:var(--mono);font-size:13px}
 
 footer{display:flex;align-items:center;justify-content:center;gap:16px;font-size:11px;color:var(--muted);font-family:var(--mono);padding:16px 32px;border-top:1px solid var(--border)}
@@ -427,6 +705,7 @@ footer{display:flex;align-items:center;justify-content:center;gap:16px;font-size
 <div class="tab-bar">
   <div class="tab active" data-tab="dashboard">Dashboard</div>
   <div class="tab" data-tab="search">Search</div>
+  <div class="tab" data-tab="activity">Activity</div>
 </div>
 
 <!-- ==================== DASHBOARD TAB ==================== -->
@@ -478,14 +757,44 @@ footer{display:flex;align-items:center;justify-content:center;gap:16px;font-size
 </div>
 
 <div class="section">
-  <div class="section-title">Sync State</div>
+  <div class="section-title">Sync Control</div>
+  <div class="phase-card" style="margin-bottom:12px">
+    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px">
+      <div style="display:flex;flex-direction:column;gap:6px">
+        <div style="font-size:12px;color:var(--muted);font-family:var(--mono)">Schedule: <span style="color:var(--text)" id="i-cron">&#x2014;</span></div>
+        <div style="font-size:12px;color:var(--muted);font-family:var(--mono)">Last sync: <span class="ok" id="i-ok">&#x2014;</span></div>
+        <div style="font-size:12px;color:var(--muted);font-family:var(--mono)">Next sync: <span style="color:var(--cyan)" id="i-next">&#x2014;</span></div>
+        <div style="font-size:12px;color:var(--muted);font-family:var(--mono)">Cursor: <span style="color:var(--text)" id="i-cursor">&#x2014;</span></div>
+      </div>
+      <button id="btn-sync" onclick="triggerSync()" class="btn-search" style="font-size:13px;padding:10px 28px">&#x25B6; Run Sync Now</button>
+    </div>
+    <div id="sync-progress" style="display:none;margin-top:14px">
+      <div style="display:flex;justify-content:space-between;font-size:11px;font-family:var(--mono);color:var(--muted);margin-bottom:6px">
+        <span id="sp-label">Processing PRs&#x2026;</span>
+        <span id="sp-count">0 / 0</span>
+      </div>
+      <div class="track"><div class="fill blue active-shimmer" id="sp-bar" style="width:0%"></div></div>
+      <div style="font-size:10px;font-family:var(--mono);color:var(--muted);margin-top:4px">Current: <span style="color:var(--cyan)" id="sp-current">&#x2014;</span></div>
+    </div>
+  </div>
   <div class="grid2">
-    <div class="info-card"><div class="info-label">Last success</div><div class="info-value ok" id="i-ok">&#x2014;</div></div>
-    <div class="info-card"><div class="info-label">Cursor (last PR updated at)</div><div class="info-value" id="i-cursor">&#x2014;</div></div>
     <div class="info-card"><div class="info-label">Last error</div><div class="info-value err" id="i-err">&#x2014;</div></div>
     <div class="info-card"><div class="info-label">GitHub &#x2014; Total PRs in repo</div><div class="info-value" id="i-gh">&#x2014;</div></div>
   </div>
   <div class="err-box" id="err-box"></div>
+</div>
+
+<div class="section">
+  <div class="section-title" style="cursor:pointer;user-select:none" onclick="$('info-guide').style.display=$('info-guide').style.display==='none'?'block':'none'">&#x2139;&#xFE0F; How This Works <span style="font-size:8px;vertical-align:middle;color:var(--cyan)">(click)</span></div>
+  <div id="info-guide" class="phase-card" style="display:none;font-size:12px;line-height:1.8;font-family:var(--mono);color:var(--muted)">
+    <p style="color:var(--text);margin-bottom:12px">Codex of Critique syncs data from GitHub into a local database. It does <b>NOT</b> query GitHub in real-time &#x2014; everything you see comes from the local DB.</p>
+    <p style="color:var(--cyan);font-weight:700;margin-bottom:4px">SYNC PROCESS</p>
+    <p>&#x2022; Runs automatically on a cron schedule (default: every 15 min)<br>&#x2022; Fetches PRs updated since last sync<br>&#x2022; For each PR: reviews, comments, review requests, code threads, blame, snippets<br>&#x2022; Can be triggered manually with "Run Sync Now"</p>
+    <p style="color:var(--cyan);font-weight:700;margin:12px 0 4px">ACTIVITY TAB</p>
+    <p>&#x2022; <b>Pending Reviews</b> &#x2014; PRs requesting your review<br>&#x2022; <b>Needs Action</b> &#x2014; changes requested, no commits since<br>&#x2022; <b>Not Re-requested</b> &#x2014; commits pushed but review not re-requested<br>&#x2022; <b>Addressed</b> &#x2014; re-review pending<br>&#x2022; <b>Merged</b> &#x2014; your merged PRs<br>&#x2022; <b>Comments</b> &#x2014; recent PR conversation</p>
+    <p style="color:var(--cyan);font-weight:700;margin:12px 0 4px">DATA FRESHNESS</p>
+    <p>Data is as fresh as the last sync. Use "Run Sync Now" to get the latest.</p>
+  </div>
 </div>
 
 </div></div>
@@ -531,6 +840,43 @@ footer{display:flex;align-items:center;justify-content:center;gap:16px;font-size
 
 </div></div>
 
+<!-- ==================== ACTIVITY TAB ==================== -->
+<div class="tab-page" id="page-activity"><div class="app-wrap">
+
+<div class="activity-bar">
+  <div class="field">
+    <label>GitHub Username</label>
+    <select id="a-username"><option value="">All users</option></select>
+  </div>
+  <div class="field">
+    <label>Category</label>
+    <select id="a-category">
+      <option value="">All</option>
+      <option value="pending_reviews">Pending Reviews</option>
+      <option value="changes_not_addressed">Changes — Needs Action</option>
+      <option value="changes_forgot_rerequest">Changes — Not Re-requested</option>
+      <option value="changes_addressed">Changes — Addressed</option>
+      <option value="changes_merged">Changes — Merged</option>
+      <option value="comments">Recent Comments</option>
+    </select>
+  </div>
+  <button class="btn-search" id="btn-activity" onclick="loadActivity()">Refresh</button>
+</div>
+
+<div class="search-meta" id="act-meta" style="display:none">
+  <span id="act-info"></span>
+  <div class="pagination">
+    <button id="act-prev" onclick="loadActivity(actPage-1)">&#x25C0; Prev</button>
+    <button id="act-next" onclick="loadActivity(actPage+1)">Next &#x25B6;</button>
+  </div>
+</div>
+
+<div id="activity-content">
+  <div class="empty-state">Enter your GitHub username and click Refresh to see what needs your attention.</div>
+</div>
+
+</div></div>
+
 <footer>
   <div class="sse-status"><div class="sse-dot" id="sse-dot"></div><span id="sse-txt">connecting&#x2026;</span></div>
   <span>&#xB7;</span>
@@ -564,6 +910,7 @@ document.querySelectorAll('.tab').forEach(t => {
     t.classList.add('active');
     $('page-' + t.dataset.tab).classList.add('active');
     if (t.dataset.tab === 'search' && !filtersLoaded) loadFilters();
+    if (t.dataset.tab === 'activity') { if (!filtersLoaded) loadFilters(); }
   });
 });
 
@@ -683,10 +1030,51 @@ function update(d) {
     $(dId).textContent = diff > 0 ? '+' + fmt(diff) + ' new' : '';
   });
 
-  $('i-ok').textContent     = fmtDate(sync.last_success_at);
+  $('i-cron').textContent   = sync.cron || '\u2014';
+  $('i-ok').textContent     = sync.last_success_at ? relTime(sync.last_success_at) : 'Never';
   $('i-cursor').textContent = fmtDate(sync.last_pr_updated_at);
+  $('i-next').textContent   = sync.next_sync_at ? relTime(sync.next_sync_at) : '\u2014';
   $('i-err').textContent    = sync.last_error_at ? fmtDate(sync.last_error_at) : 'None';
   $('i-gh').textContent     = fmt(gh.total_prs);
+
+  const syncBtn = $('btn-sync');
+  const spDiv = $('sync-progress');
+  if (sync.manual_running) {
+    syncBtn.disabled = true;
+    syncBtn.textContent = '\u23F3 Syncing\u2026';
+    const phase = sync.progress_phase;
+    const total = sync.progress_total || 0;
+    const done = sync.progress_done || 0;
+    const bar = $('sp-bar');
+    if (phase === 'fetching_prs') {
+      spDiv.style.display = 'block';
+      $('sp-label').textContent = 'Fetching pull requests\u2026';
+      $('sp-count').textContent = '';
+      bar.style.width = '30%';
+      bar.className = 'fill blue active-shimmer';
+      $('sp-current').textContent = 'querying GitHub';
+    } else if (phase === 'processing_prs' && total > 0) {
+      spDiv.style.display = 'block';
+      const pct = Math.min(100, Math.round(done / total * 100));
+      $('sp-label').textContent = 'Processing PRs\u2026';
+      $('sp-count').textContent = done + ' / ' + total + ' (' + pct + '%)';
+      bar.style.width = Math.max(2, pct) + '%';
+      bar.className = 'fill green' + (pct < 100 ? ' active-shimmer' : '');
+      $('sp-current').textContent = sync.progress_current_pr ? 'PR #' + sync.progress_current_pr : '\u2014';
+    } else {
+      spDiv.style.display = 'block';
+      $('sp-label').textContent = phase === 'starting' ? 'Starting\u2026' : 'Working\u2026';
+      $('sp-count').textContent = '';
+      bar.style.width = '10%';
+      bar.className = 'fill blue active-shimmer';
+      $('sp-current').textContent = '\u2014';
+    }
+  } else {
+    syncBtn.disabled = false;
+    syncBtn.textContent = '\u25B6 Run Sync Now';
+    spDiv.style.display = 'none';
+  }
+
   const box = $('err-box');
   box.style.display = sync.last_error_message ? 'block' : 'none';
   if (sync.last_error_message) box.textContent = sync.last_error_message;
@@ -702,6 +1090,21 @@ function update(d) {
   }
 
   prev = Object.assign({}, t);
+}
+
+async function triggerSync() {
+  const btn = $('btn-sync');
+  btn.disabled = true; btn.textContent = '\u23F3 Starting\u2026';
+  try {
+    const r = await fetch('/api/sync/trigger', { method: 'POST' }).then(r => r.json());
+    if (r.status === 'already_running') {
+      btn.textContent = '\u23F3 Already running\u2026';
+    } else {
+      btn.textContent = '\u23F3 Syncing\u2026';
+    }
+  } catch (e) {
+    btn.disabled = false; btn.textContent = '\u25B6 Run Sync Now';
+  }
 }
 
 function connect() {
@@ -729,6 +1132,7 @@ async function loadFilters() {
     fillSelect('f-repo', d.repositories);
     fillSelect('f-pr-author', d.pr_authors);
     fillSelect('f-reviewer', d.reviewers);
+    fillSelect('a-username', d.pr_authors);
     filtersLoaded = true;
   } catch {}
 }
@@ -743,6 +1147,133 @@ function fillSelect(id, items) {
 
 $('f-comment').addEventListener('keydown', e => { if (e.key === 'Enter') doSearch(1); });
 $('f-snippet').addEventListener('keydown', e => { if (e.key === 'Enter') doSearch(1); });
+
+/* ---- ACTIVITY ---- */
+let activityLoaded = false, actPage = 1;
+const ACT_ALL_LIMIT = 10, ACT_PAGE_LIMIT = 50;
+
+const ACT_SECTIONS = [
+  { key: 'pending_reviews',          cat: 'pending_reviews',          title: 'Pending Reviews' },
+  { key: 'changes_not_addressed',    cat: 'changes_not_addressed',    title: 'Changes \u2014 Needs Action' },
+  { key: 'changes_forgot_rerequest', cat: 'changes_forgot_rerequest', title: 'Changes \u2014 Not Re-requested' },
+  { key: 'changes_addressed',        cat: 'changes_addressed',        title: 'Changes \u2014 Addressed' },
+  { key: 'changes_merged',           cat: 'changes_merged',           title: 'Merged PRs' },
+  { key: 'comments',                 cat: 'comments',                 title: 'Recent Comments' },
+];
+
+function ghUrl(owner, repo, number) {
+  return 'https://github.com/' + owner + '/' + repo + '/pull/' + number;
+}
+
+function selectCategory(cat) {
+  $('a-category').value = cat;
+  loadActivity(1);
+}
+
+async function loadActivity(page) {
+  actPage = page || 1;
+  const user = $('a-username').value;
+  const btn = $('btn-activity');
+  btn.disabled = true; btn.textContent = 'Loading\u2026';
+
+  const cat = $('a-category').value;
+  const perPage = cat ? ACT_PAGE_LIMIT : ACT_ALL_LIMIT;
+  const params = new URLSearchParams({ per_page: perPage, page: actPage });
+  if (user) params.set('username', user);
+  if (cat) params.set('category', cat);
+
+  try {
+    const d = await fetch('/api/activity?' + params).then(r => r.json());
+    if (d.error) {
+      $('activity-content').innerHTML = '<div class="empty-state">' + esc(d.error) + '</div>';
+      $('act-meta').style.display = 'none';
+    } else {
+      renderActivity(d);
+      activityLoaded = true;
+    }
+  } catch (e) {
+    $('activity-content').innerHTML = '<div class="empty-state">Error: ' + esc(e.message) + '</div>';
+    $('act-meta').style.display = 'none';
+  }
+  btn.disabled = false; btn.textContent = 'Refresh';
+}
+
+function renderActivityCard(r, cat) {
+  if (cat === 'comments') {
+    return '<a class="comment-card" href="' + ghUrl(r.repo_owner, r.repo_name, r.pr_number) + '" target="_blank">' +
+      '<div class="cc-head">' +
+        '<span class="cc-author">@' + esc(r.author_login || '\u2014') + '</span>' +
+        '<span class="cc-pr">#' + r.pr_number + '</span>' +
+        '<span style="font-size:10px;color:var(--muted)">' + esc(r.repo_owner + '/' + r.repo_name) + '</span>' +
+        '<span class="cc-time">' + relTime(r.ts) + '</span>' +
+      '</div>' +
+      '<div class="cc-body">' + esc((r.body || '').substring(0, 200)) + '</div>' +
+    '</a>';
+  }
+  let style = '', meta = '';
+  if (cat === 'changes_forgot_rerequest') {
+    style = ' style="border-color:#f59e0b40"';
+    meta = '<span class="ac-meta" style="color:var(--yellow)">@' + esc(r.pr_author || r.reviewer || '') + ' \u2192 @' + esc(r.reviewer || '') + ' \u2014 committed ' + relTime(r.last_commit_at) + '</span>';
+  } else if (cat === 'changes_addressed') {
+    style = ' style="border-color:#10b98140"';
+    meta = '<span class="ac-meta" style="color:var(--green)">@' + esc(r.reviewer || '') + ' re-review pending</span>';
+  } else if (cat === 'changes_merged') {
+    style = ' style="opacity:.7"';
+    meta = '<span class="ac-meta" style="color:var(--muted)">merged ' + relTime(r.merged_at_github) + '</span>';
+  } else if (cat === 'changes_not_addressed') {
+    meta = '<span class="ac-meta">@' + esc(r.reviewer || '') + ' \u2014 ' + relTime(r.review_date) + '</span>';
+  } else {
+    meta = '<span class="ac-meta">' + relTime(r.updated_at_github) + '</span>';
+  }
+  return '<a class="activity-card"' + style + ' href="' + ghUrl(r.repo_owner, r.repo_name, r.pr_number) + '" target="_blank">' +
+    '<span class="ac-repo">' + esc(r.repo_owner + '/' + r.repo_name) + '</span>' +
+    '<span class="ac-pr">#' + r.pr_number + '</span>' +
+    '<span class="ac-title">' + esc(r.pr_title) + '</span>' +
+    meta +
+  '</a>';
+}
+
+function renderActivity(d) {
+  const s = d.sections;
+  const activeCat = d.category;
+  let html = '';
+
+  for (const sec of ACT_SECTIONS) {
+    const items = s[sec.key];
+    if (items === undefined) continue;
+    let footer = '';
+    if (!activeCat && items.length === ACT_ALL_LIMIT) {
+      footer = '<div style="padding:8px 18px"><button onclick="selectCategory(\'' + sec.cat + '\')" style="background:none;border:none;color:var(--cyan);font-family:var(--mono);font-size:11px;cursor:pointer;padding:0">Show all \u2192</button></div>';
+    }
+    if (!items.length) {
+      html += '<div class="activity-section">' +
+        '<div class="activity-section-header"><span class="activity-section-title">' + esc(sec.title) + '</span><span class="count-badge">0</span></div>' +
+        '<div class="empty-state" style="padding:20px">None found.</div></div>';
+    } else {
+      html += '<div class="activity-section">' +
+        '<div class="activity-section-header"><span class="activity-section-title">' + esc(sec.title) + '</span><span class="count-badge">' + items.length + '</span></div>' +
+        items.map(r => renderActivityCard(r, sec.cat)).join('') +
+        footer +
+        '</div>';
+    }
+  }
+
+  if (!html) html = '<div class="empty-state">No activity found.</div>';
+  $('activity-content').innerHTML = html;
+
+  // Pagination bar — only in single-category mode
+  const meta = $('act-meta');
+  if (activeCat && s.total !== undefined) {
+    const total = s.total;
+    const totalPages = Math.ceil(total / ACT_PAGE_LIMIT) || 1;
+    meta.style.display = 'flex';
+    $('act-info').textContent = fmt(total) + ' results \u2014 page ' + actPage + ' of ' + totalPages;
+    $('act-prev').disabled = actPage <= 1;
+    $('act-next').disabled = actPage >= totalPages;
+  } else {
+    meta.style.display = 'none';
+  }
+}
 
 async function doSearch(page) {
   searchPage = page;

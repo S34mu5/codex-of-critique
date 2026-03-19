@@ -10,6 +10,7 @@ from app.repos.sync_state_repo import advance_cursor, get_sync_state, record_err
 from app.services.blame_service import BlameCache, resolve_and_persist_blame
 from app.services.pr_service import fetch_and_persist_prs
 from app.services.review_thread_service import fetch_and_persist_threads
+from app.services.pr_extras_service import fetch_and_persist_pr_extras
 from app.services.snippet_service import (
     ContentCache,
     fetch_and_persist_blob_excerpt,
@@ -66,6 +67,17 @@ def run_repository_sync() -> None:
 
         for pr in prs:
             try:
+                fetch_and_persist_pr_extras(
+                    session=session,
+                    gql=gql,
+                    owner=owner,
+                    repo_name=repo_name,
+                    repository_id=repository.id,
+                    pull_request_id=pr["db_id"],
+                    pr_number=pr["number"],
+                )
+                session.commit()
+
                 comments = fetch_and_persist_threads(
                     session=session,
                     gql=gql,

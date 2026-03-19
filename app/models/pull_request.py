@@ -37,6 +37,7 @@ class PullRequest(Base):
     created_at_github: Mapped[datetime] = mapped_column(DateTime, nullable=False)
     updated_at_github: Mapped[datetime] = mapped_column(DateTime, nullable=False)
     merged_at_github: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    last_commit_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     raw_payload: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, server_default=func.now()
@@ -48,3 +49,6 @@ class PullRequest(Base):
     repository = relationship("Repository", back_populates="pull_requests")
     review_threads = relationship("ReviewThread", back_populates="pull_request")
     review_comments = relationship("ReviewComment", back_populates="pull_request")
+    pr_reviews = relationship("PrReview", back_populates="pull_request")
+    pr_comments = relationship("PrComment", back_populates="pull_request")
+    review_requests = relationship("ReviewRequest", back_populates="pull_request")
