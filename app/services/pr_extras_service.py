@@ -92,6 +92,8 @@ def fetch_and_persist_pr_extras(
     logger.info(
         "pr_extras_synced",
         extra={
+            "owner": owner,
+            "repo": repo_name,
             "pr": pr_number,
             "reviews": len(review_nodes),
             "comments": len(comment_nodes),

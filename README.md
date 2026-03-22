@@ -25,7 +25,7 @@ GitHub REST API ────►   (blame + snippets)
 ```bash
 # 1. Copy and fill in your credentials
 cp .env.example .env
-# Set GITHUB_TOKEN, GITHUB_OWNER, GITHUB_REPO inside .env
+# Set GITHUB_TOKEN and repository configuration inside .env
 
 # 2. Start all services (MySQL + sync app + dashboard)
 docker compose up -d
@@ -37,6 +37,30 @@ docker compose exec app alembic upgrade head
 After step 3 the sync starts automatically — no further action needed.
 
 > **Important:** Never run `docker compose down -v`. The `-v` flag deletes the MySQL volume and all ingested data. Use `docker compose down` (without `-v`) to stop containers while keeping the data.
+
+---
+
+### Repository Configuration
+
+The system supports both single and multiple repository configurations:
+
+#### Option 1: Single Repository (Legacy - Backward Compatible)
+```bash
+GITHUB_OWNER=my-org
+GITHUB_REPO=my-private-repo
+```
+
+#### Option 2: Multiple Repositories (New Format)
+```bash
+GITHUB_REPOSITORIES=[{"owner": "org1", "repo": "repo1"}, {"owner": "org2", "repo": "repo2"}, {"owner": "org3", "repo": "repo3"}]
+```
+
+**Notes:**
+- If `GITHUB_REPOSITORIES` is set, it will override `GITHUB_OWNER`/`GITHUB_REPO`
+- The JSON format must be valid: `[{"owner": "org", "repo": "repo"}]`
+- All repositories share the same `GITHUB_TOKEN`
+- The dashboard will show aggregated statistics across all repositories
+- Each repository is synced independently; if one fails, others continue
 
 ---
 
@@ -72,7 +96,8 @@ The dashboard auto-refreshes every 5 seconds and shows:
 - Progress bars for Pull Requests, Review Comments, and Code Snippets
 - Record counts for all 7 database tables, with delta indicators
 - Sync state: last successful run, last error, and the incremental cursor
-- Total PR count fetched live from GitHub
+- Total PR count fetched live from GitHub (aggregated across all repositories)
+- Repository count and list of configured repositories
 
 ---
 
@@ -80,11 +105,19 @@ The dashboard auto-refreshes every 5 seconds and shows:
 
 The sync runs automatically on startup and then on the schedule defined by `SYNC_CRON` (default: every 6 hours).
 
+For each configured repository:
+
 **Phase 1 — Pull Requests:** fetches all PRs updated since the last run cursor, paginating through GitHub's GraphQL API 50 at a time.
 
 **Phase 2 — Threads & Comments:** for each PR, fetches all review threads and their comments, resolving code authorship via the blame API and extracting code snippets.
 
-The cursor (`last_pr_updated_at` in `sync_state`) is advanced after each successful run. A 6-hour overlap window ensures no PR is missed due to clock skew or API delays.
+**Multi-Repository Behavior:**
+- Each repository is processed independently with its own sync cursor
+- If one repository fails, sync continues for others
+- Progress is aggregated across all repositories in the dashboard
+- Each repository maintains separate sync state in the database
+
+The cursor (`last_pr_updated_at` in `sync_state`) is advanced per repository after each successful run. A 6-hour overlap window ensures no PR is missed due to clock skew or API delays.
 
 ---
 
