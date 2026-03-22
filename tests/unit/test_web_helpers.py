@@ -1,3 +1,4 @@
+from datetime import datetime, timedelta, timezone
 import unittest
 
 from app import web
@@ -151,6 +152,40 @@ class TestAddValueFilterConditions(unittest.TestCase):
             params,
             {"search_reviewer_include_0": "greptile-apps"},
         )
+
+
+class TestIsoUtc(unittest.TestCase):
+    def test_assumes_naive_datetimes_are_utc(self):
+        result = web._iso_utc(datetime(2026, 3, 22, 19, 15, 0))
+
+        self.assertEqual(result, "2026-03-22T19:15:00Z")
+
+    def test_normalizes_aware_datetimes_to_utc(self):
+        local_time = datetime(
+            2026,
+            3,
+            22,
+            21,
+            15,
+            0,
+            tzinfo=timezone(timedelta(hours=2)),
+        )
+
+        result = web._iso_utc(local_time)
+
+        self.assertEqual(result, "2026-03-22T19:15:00Z")
+
+
+class TestNextSyncAt(unittest.TestCase):
+    def test_returns_next_future_cron_tick_from_now(self):
+        original_cron = web.settings.sync_cron
+        web.settings.sync_cron = "*/15 * * * *"
+        try:
+            result = web._next_sync_at(datetime(2026, 3, 22, 19, 46, 41))
+        finally:
+            web.settings.sync_cron = original_cron
+
+        self.assertEqual(result, "2026-03-22T20:00:00Z")
 
 
 if __name__ == "__main__":
