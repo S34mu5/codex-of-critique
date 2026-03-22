@@ -934,6 +934,7 @@ def activity(
                 JOIN pull_requests pr ON pr.id = rev.pull_request_id
                 JOIN repositories rp ON rp.id = pr.repository_id
                 WHERE pr.state = 'OPEN'
+                  AND (:username = '' OR pr.author_login = :username)
                   AND rev.state = 'CHANGES_REQUESTED'
                   {repo_where}
                   AND rev.submitted_at = (

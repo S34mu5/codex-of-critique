@@ -6,6 +6,7 @@ from app.clients.github_graphql import GitHubGraphQLClient
 from app.clients.github_rest import GitHubRESTClient
 from app.config import settings
 from app.db import get_session
+from app.models.pull_request import PullRequest
 from app.repos.repository_repo import get_or_create_repository
 from app.repos.sync_state_repo import advance_cursor, get_sync_state, record_error
 from app.services.blame_service import BlameCache, resolve_and_persist_blame
@@ -21,6 +22,22 @@ from app.services.snippet_service import (
 logger = logging.getLogger(__name__)
 
 OVERLAP_HOURS = 6
+MISSING_EXTRAS_BACKFILL_LIMIT = 50
+
+
+def _get_open_prs_missing_extras(session, repository_id: int) -> List[Dict[str, int]]:
+    rows = (
+        session.query(PullRequest.id, PullRequest.number)
+        .filter(
+            PullRequest.repository_id == repository_id,
+            PullRequest.state == "OPEN",
+            PullRequest.last_commit_at.is_(None),
+        )
+        .order_by(PullRequest.updated_at_github.desc())
+        .limit(MISSING_EXTRAS_BACKFILL_LIMIT)
+        .all()
+    )
+    return [{"db_id": row.id, "number": row.number} for row in rows]
 
 
 def run_repository_sync(selected_repos: Optional[List[Dict[str, str]]] = None) -> None:
@@ -152,6 +169,33 @@ def run_repository_sync(selected_repos: Optional[List[Dict[str, str]]] = None) -
                     except Exception:
                         session.rollback()
                         logger.exception("sync_pr_error", extra={"owner": owner, "repo": repo_name, "pr_number": pr["number"]})
+                        continue
+
+                missing_extras_prs = _get_open_prs_missing_extras(session, repository.id)
+                if missing_extras_prs:
+                    logger.info(
+                        "sync_repo_backfill_missing_extras",
+                        extra={"owner": owner, "repo": repo_name, "count": len(missing_extras_prs)},
+                    )
+
+                for pr in missing_extras_prs:
+                    try:
+                        fetch_and_persist_pr_extras(
+                            session=session,
+                            gql=gql,
+                            owner=owner,
+                            repo_name=repo_name,
+                            repository_id=repository.id,
+                            pull_request_id=pr["db_id"],
+                            pr_number=pr["number"],
+                        )
+                        session.commit()
+                    except Exception:
+                        session.rollback()
+                        logger.exception(
+                            "sync_pr_backfill_error",
+                            extra={"owner": owner, "repo": repo_name, "pr_number": pr["number"]},
+                        )
                         continue
 
                 if max_updated:
