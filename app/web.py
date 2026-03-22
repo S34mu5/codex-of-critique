@@ -3,7 +3,7 @@ import json
 import logging
 import threading
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 import httpx
@@ -55,6 +55,26 @@ def _configured_repositories() -> List[Dict[str, str]]:
         seen.add(identifier)
 
     return repositories
+
+
+def _as_utc(dt: datetime) -> datetime:
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
+def _iso_utc(value: object) -> object:
+    if not isinstance(value, datetime):
+        return value
+    return _as_utc(value).isoformat().replace("+00:00", "Z")
+
+
+def _next_sync_at(now: datetime) -> str | None:
+    try:
+        next_run = croniter(settings.sync_cron, _as_utc(now)).get_next(datetime)
+    except Exception:
+        return None
+    return _iso_utc(next_run)
 
 
 def _parse_repo_identifiers(raw: Optional[str]) -> List[str]:
@@ -443,13 +463,10 @@ async def _build_stats() -> dict:
             ORDER BY r.owner, r.name
         """)).fetchall()
 
-    now = datetime.now()
+    now = datetime.now(timezone.utc)
 
     def secs_since(dt: datetime | None) -> float:
-        return (now - dt).total_seconds() if dt else 9999.0
-
-    def iso(v: object) -> str | None:
-        return v.isoformat() if isinstance(v, datetime) else v  # type: ignore[union-attr]
+        return (now - _as_utc(dt)).total_seconds() if dt else 9999.0
 
     active_secs = min(secs_since(last_rc), secs_since(last_pr))
     is_active = active_secs < 45
@@ -503,10 +520,10 @@ async def _build_stats() -> dict:
             configured=item.get("configured", False),
             pull_requests=row.pull_requests,
             review_comments=row.review_comments,
-            last_success_at=iso(row.last_success_at),
-            last_error_at=iso(row.last_error_at),
+            last_success_at=_iso_utc(row.last_success_at),
+            last_error_at=_iso_utc(row.last_error_at),
             last_error_message=row.last_error_message,
-            last_pr_updated_at=iso(row.last_pr_updated_at),
+            last_pr_updated_at=_iso_utc(row.last_pr_updated_at),
         )
 
     for repo_id, item in repo_status_map.items():
@@ -571,26 +588,17 @@ async def _build_stats() -> dict:
     for item in activity:
         for k, v in item.items():
             if isinstance(v, datetime):
-                item[k] = v.isoformat()
-
-    next_sync = None
-    last_success = sync.get("last_success_at")
-    if last_success and isinstance(last_success, datetime):
-        try:
-            cron = croniter(settings.sync_cron, last_success)
-            next_sync = cron.get_next(datetime).isoformat()
-        except Exception:
-            pass
+                item[k] = _iso_utc(v)
 
     return {
-        "ts": now.isoformat(),
+        "ts": _iso_utc(now),
         "tables": counts,
         "sync": {
-            "last_success_at": iso(sync.get("last_success_at")),
-            "last_error_at": iso(sync.get("last_error_at")),
+            "last_success_at": _iso_utc(sync.get("last_success_at")),
+            "last_error_at": _iso_utc(sync.get("last_error_at")),
             "last_error_message": sync.get("last_error_message"),
-            "last_pr_updated_at": iso(sync.get("last_pr_updated_at")),
-            "next_sync_at": next_sync,
+            "last_pr_updated_at": _iso_utc(sync.get("last_pr_updated_at")),
+            "next_sync_at": _next_sync_at(now),
             "cron": settings.sync_cron,
             "manual_running": _sync_lock.locked(),
             "progress_phase": _sync_progress["phase"],
@@ -1039,7 +1047,7 @@ def _row_to_dict(row) -> dict:
     d = dict(row._mapping)
     for k, v in d.items():
         if isinstance(v, datetime):
-            d[k] = v.isoformat()
+            d[k] = _iso_utc(v)
     return d
 
 
@@ -1580,19 +1588,40 @@ footer{display:flex;align-items:center;justify-content:center;gap:16px;font-size
 
 <script>
 const fmt = n => n != null ? n.toLocaleString('en-US') : '\u2014';
-const fmtDate = s => s ? new Date(s).toLocaleString('en-US') : '\u2014';
+const parseDate = s => {
+  if (!s) return null;
+  if (s instanceof Date) return Number.isNaN(s.getTime()) ? null : s;
+  let normalized = s;
+  if (typeof s === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?$/.test(s)) {
+    normalized += 'Z';
+  }
+  const d = new Date(normalized);
+  return Number.isNaN(d.getTime()) ? null : d;
+};
+const fmtDate = s => {
+  const d = parseDate(s);
+  return d ? d.toLocaleString('en-US') : '\u2014';
+};
 const $ = id => document.getElementById(id);
 const esc = s => {
   const d = document.createElement('div'); d.textContent = s; return d.innerHTML;
 };
 const relTime = s => {
-  if (!s) return '\u2014';
-  const sec = Math.round((Date.now() - new Date(s)) / 1000);
-  if (sec < 5)  return 'just now';
+  const d = parseDate(s);
+  if (!d) return '\u2014';
+  const sec = Math.round((Date.now() - d.getTime()) / 1000);
+  const absSec = Math.abs(sec);
+  if (absSec < 5) return 'just now';
+  if (sec < 0) {
+    if (absSec < 60) return 'in ' + absSec + 's';
+    if (absSec < 3600) return 'in ' + Math.floor(absSec/60) + 'm';
+    if (absSec < 86400) return 'in ' + Math.floor(absSec/3600) + 'h';
+    return fmtDate(d);
+  }
   if (sec < 60) return sec + 's ago';
   if (sec < 3600) return Math.floor(sec/60) + 'm ago';
   if (sec < 86400) return Math.floor(sec/3600) + 'h ago';
-  return fmtDate(s);
+  return fmtDate(d);
 };
 
 const REPO_PICKERS = {
