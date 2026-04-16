@@ -198,10 +198,13 @@ def run_repository_sync(selected_repos: Optional[List[Dict[str, str]]] = None) -
                         )
                         continue
 
+                state = get_sync_state(session, repository.id)
                 if max_updated:
-                    state = get_sync_state(session, repository.id)
                     advance_cursor(session, state, max_updated)
-                    session.commit()
+                elif state.last_error_message:
+                    state.last_error_at = None
+                    state.last_error_message = None
+                session.commit()
 
                 total_prs_synced += len(prs)
                 total_comments_synced += repo_comments
