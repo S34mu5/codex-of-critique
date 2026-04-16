@@ -1262,6 +1262,7 @@ header{display:flex;align-items:center;justify-content:space-between;margin-bott
 .repo-status-badge.state-complete{color:var(--green);border-color:#10b98140;background:#10b98114}
 .repo-status-badge.state-error{color:var(--red);border-color:#ef444440;background:#ef444414}
 .repo-status-badge.state-excluded{color:var(--muted);border-color:var(--border);background:#0f1c2d}
+.user-avatar{width:18px;height:18px;border-radius:50%;border:1px solid var(--border);vertical-align:middle;flex-shrink:0;object-fit:cover}
 .repo-status-lines{display:flex;flex-direction:column;gap:6px}
 .repo-status-line{display:flex;justify-content:space-between;gap:12px;font-family:var(--mono);font-size:11px;color:var(--muted)}
 .repo-status-line strong{color:var(--text);font-weight:600}
@@ -1717,6 +1718,17 @@ let repositoryChoices = [];
 let repositoryOptionsLoaded = false;
 let manualSyncRunning = false;
 let filterChoices = { pr_authors: [], reviewers: [] };
+const avatarMap = {};
+function buildAvatarMap() {
+  for (const source of ['pr_authors', 'reviewers']) {
+    const items = filterChoices[source] || [];
+    for (const item of items) {
+      if (typeof item === 'object' && item.login && item.avatar_url) {
+        avatarMap[item.login] = item.avatar_url;
+      }
+    }
+  }
+}
 
 function normalizeRepoChoices(items) {
   const seen = new Set();
@@ -1913,12 +1925,19 @@ async function loadRepositoryOptions() {
 }
 
 function normalizeFilterChoices(items) {
+  if (!items || !items.length) return [];
+  if (typeof items[0] === 'string') {
+    return [...new Set(items.map(s => s.trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+  }
   const seen = new Set();
-  return (items || []).map(item => String(item || '').trim()).filter(value => {
-    if (!value || seen.has(value)) return false;
-    seen.add(value);
-    return true;
-  });
+  return items
+    .filter(item => {
+      const login = (item.login || '').trim();
+      if (!login || seen.has(login)) return false;
+      seen.add(login);
+      return true;
+    })
+    .sort((a, b) => (a.login || '').localeCompare(b.login || ''));
 }
 
 function hydrateFilterChoices(source, items) {
@@ -1931,6 +1950,7 @@ function hydrateFilterChoices(source, items) {
   Object.keys(VALUE_PICKERS)
     .filter(prefix => VALUE_PICKERS[prefix].source === source)
     .forEach(renderValuePicker);
+  buildAvatarMap();
 }
 
 function getSelectedValues(prefix) {
@@ -1947,10 +1967,13 @@ function renderValuePicker(prefix) {
   const items = filterChoices[cfg.source] || [];
   const previous = container.dataset.ready === 'true' ? new Set(getSelectedValues(prefix)) : null;
   container.innerHTML = items.length
-    ? items.map(value => {
+    ? items.map(item => {
+        const value = typeof item === 'string' ? item : item.login;
+        const avatar = typeof item === 'string' ? '' : (item.avatar_url || '');
         const checked = previous ? previous.has(value) : cfg.defaultChecked;
         return '<label class="repo-option' + (cfg.defaultChecked ? '' : ' dim') + '">' +
           '<input type="checkbox" data-value-group="' + prefix + '" value="' + esc(value) + '"' + (checked ? ' checked' : '') + '>' +
+          (avatar ? '<img class="user-avatar" src="' + esc(avatar) + '" onerror="this.style.display=\'none\'">' : '') +
           '<span>' + esc(value) + '</span>' +
         '</label>';
       }).join('')
@@ -2002,8 +2025,11 @@ function renderSinglePicker(prefix) {
   container.innerHTML = options.length
     ? options.map(option => {
         const checked = option.value === select.value;
+        const avatar = avatarMap[option.value] || '';
+        const isUserPicker = prefix === 'activity-username';
         return '<label class="repo-option' + (checked ? '' : ' dim') + '">' +
           '<input type="checkbox" data-single-group="' + prefix + '" value="' + esc(option.value) + '"' + (checked ? ' checked' : '') + '>' +
+          (isUserPicker && avatar ? '<img class="user-avatar" src="' + esc(avatar) + '" onerror="this.style.display=\'none\'">' : '') +
           '<span>' + esc(option.textContent || option.label || option.value) + '</span>' +
         '</label>';
       }).join('')
@@ -2372,9 +2398,10 @@ function fillSelect(id, items) {
   sel.innerHTML = '';
   if (firstOption) sel.appendChild(firstOption);
 
-  normalizeFilterChoices(items).forEach(v => {
+  normalizeFilterChoices(items).forEach(item => {
+    const value = typeof item === 'string' ? item : item.login;
     const o = document.createElement('option');
-    o.value = v; o.textContent = v;
+    o.value = value; o.textContent = value;
     sel.appendChild(o);
   });
 
