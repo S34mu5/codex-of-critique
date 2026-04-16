@@ -11,6 +11,7 @@ import uvicorn
 from croniter import croniter
 from fastapi import FastAPI, Query
 from fastapi.responses import HTMLResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
 
 from app.config import settings
@@ -1137,7 +1138,7 @@ _HTML = r"""<!DOCTYPE html>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Codex of Critique</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Inter:wght@400;500;600;700&family=Playfair+Display:wght@700&display=swap" rel="stylesheet">
 <style>
 :root{
   --bg:#060d18;--s1:#0c1829;--s2:#132034;--border:#1a2e4a;
@@ -1152,9 +1153,10 @@ body{background:var(--bg);color:var(--text);font-family:var(--sans);min-height:1
 .app-wrap{padding:28px 32px}
 
 /* ---- HEADER ---- */
-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:0;padding:20px 32px;border-bottom:1px solid var(--border)}
-.logo{font-family:var(--mono);font-size:20px;font-weight:700;color:var(--cyan);letter-spacing:-.3px}
-.subrepo{font-family:var(--mono);font-size:12px;color:var(--muted);margin-top:5px}
+header{display:flex;align-items:center;justify-content:space-between;margin-bottom:0;padding:18px 32px;border-bottom:1px solid var(--border)}
+.logo{font-family:'Playfair Display',Georgia,serif;font-size:22px;font-weight:700;color:var(--text);letter-spacing:.5px}
+.logo span{color:var(--cyan)}
+.subrepo{font-family:var(--mono);font-size:11px;color:var(--muted);margin-top:4px;letter-spacing:.3px}
 .header-right{display:flex;align-items:center;gap:14px}
 .badge{display:flex;align-items:center;gap:8px;padding:6px 16px;border-radius:999px;font-size:12px;font-weight:600;font-family:var(--mono);border:1px solid;transition:all .4s}
 .badge.active{background:#10b98114;border-color:var(--green);color:var(--green)}
@@ -1361,7 +1363,7 @@ footer{display:flex;align-items:center;justify-content:center;gap:16px;font-size
 
 <header>
   <div>
-    <div class="logo">&#x2B21; Codex of Critique</div>
+    <div class="logo"><span>Codex</span> of Critique</div>
     <div class="subrepo" id="repo">connecting&#x2026;</div>
   </div>
   <div class="header-right">
