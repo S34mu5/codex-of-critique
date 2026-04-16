@@ -23,6 +23,7 @@ def upsert_pull_request(
     raw_payload: dict[str, Any] | None,
     mergeable: str | None = None,
     mergeable_updated_at: datetime | None = None,
+    author_avatar_url: str | None = None,
 ) -> int:
     """Upsert a pull request and return its database id."""
     stmt = insert(PullRequest).values(
@@ -39,6 +40,7 @@ def upsert_pull_request(
         raw_payload=raw_payload,
         mergeable=mergeable,
         mergeable_updated_at=mergeable_updated_at,
+        author_avatar_url=author_avatar_url,
     )
     stmt = stmt.on_duplicate_key_update(
         title=stmt.inserted.title,
@@ -50,6 +52,7 @@ def upsert_pull_request(
         raw_payload=stmt.inserted.raw_payload,
         mergeable=stmt.inserted.mergeable,
         mergeable_updated_at=stmt.inserted.mergeable_updated_at,
+        author_avatar_url=stmt.inserted.author_avatar_url,
         updated_at=func.now(),
     )
     session.execute(stmt)

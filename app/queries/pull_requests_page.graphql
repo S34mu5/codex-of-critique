@@ -21,7 +21,7 @@ query PullRequestsPage($owner: String!, $name: String!, $after: String) {
         state
         reviewDecision
         mergeable
-        author { login }
+        author { login avatarUrl }
       }
     }
   }

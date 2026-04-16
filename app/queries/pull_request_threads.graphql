@@ -9,7 +9,7 @@ query PullRequestThreads(
       id
       number
       title
-      author { login }
+      author { login avatarUrl }
 
       reviewThreads(first: 50, after: $after) {
         pageInfo {
@@ -39,7 +39,7 @@ query PullRequestThreads(
               bodyText
               createdAt
               lastEditedAt
-              author { login }
+              author { login avatarUrl }
               authorAssociation
               diffHunk
               path
@@ -51,14 +51,14 @@ query PullRequestThreads(
                 author {
                   name
                   email
-                  user { login }
+                  user { login avatarUrl }
                 }
               }
               pullRequestReview {
                 id
                 state
                 submittedAt
-                author { login }
+                author { login avatarUrl }
               }
             }
           }

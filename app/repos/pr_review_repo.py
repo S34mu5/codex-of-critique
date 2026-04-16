@@ -13,7 +13,8 @@ def upsert_pr_review(
     pull_request_id: int,
     github_node_id: str,
     author_login: str | None,
-    state: str | None,
+    author_avatar_url: str | None = None,
+    state: str | None = None,
     body: str | None,
     submitted_at: datetime | None,
 ) -> int:

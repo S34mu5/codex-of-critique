@@ -7,7 +7,7 @@ query PullRequestExtras($owner: String!, $name: String!, $number: Int!) {
           state
           body
           submittedAt
-          author { login }
+          author { login avatarUrl }
         }
       }
       comments(first: 100) {
@@ -17,7 +17,7 @@ query PullRequestExtras($owner: String!, $name: String!, $number: Int!) {
           body
           createdAt
           lastEditedAt
-          author { login }
+          author { login avatarUrl }
           authorAssociation
         }
       }
@@ -31,7 +31,7 @@ query PullRequestExtras($owner: String!, $name: String!, $number: Int!) {
       reviewRequests(first: 20) {
         nodes {
           requestedReviewer {
-            ... on User { login }
+            ... on User { login avatarUrl }
             ... on Team { name }
           }
         }
