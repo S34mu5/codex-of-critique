@@ -34,6 +34,7 @@ class PrComment(Base):
         BigInteger, nullable=True, unique=True
     )
     author_login: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    author_avatar_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
     author_association: Mapped[str | None] = mapped_column(String(64), nullable=True)
     body: Mapped[str | None] = mapped_column(MEDIUMTEXT, nullable=True)
     comment_created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)

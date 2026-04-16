@@ -31,6 +31,7 @@ class PrReview(Base):
     )
     github_node_id: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
     author_login: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    author_avatar_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
     state: Mapped[str | None] = mapped_column(String(64), nullable=True)
     body: Mapped[str | None] = mapped_column(MEDIUMTEXT, nullable=True)
     submitted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

@@ -34,6 +34,7 @@ class ReviewRequest(Base):
         BigInteger, ForeignKey("pull_requests.id"), nullable=False
     )
     requested_reviewer_login: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    requested_reviewer_avatar_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
     requested_team_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     status: Mapped[str] = mapped_column(String(32), nullable=False, server_default="pending")
     completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

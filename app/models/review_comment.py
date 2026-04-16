@@ -50,6 +50,7 @@ class ReviewComment(Base):
     review_submitted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     comment_author_login: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    comment_author_avatar_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
     author_association: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
     path: Mapped[str] = mapped_column(String(1024), nullable=False)

@@ -33,6 +33,7 @@ class PullRequest(Base):
     number: Mapped[int] = mapped_column(Integer, nullable=False)
     title: Mapped[str] = mapped_column(String(1024), nullable=False)
     author_login: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    author_avatar_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
     review_decision: Mapped[str | None] = mapped_column(String(64), nullable=True)
     state: Mapped[str | None] = mapped_column(String(32), nullable=True)
     created_at_github: Mapped[datetime] = mapped_column(DateTime, nullable=False)
