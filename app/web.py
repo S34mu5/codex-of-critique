@@ -423,6 +423,7 @@ async def _build_stats() -> dict:
             FROM sync_state
             WHERE sync_name = 'pr_scan'
               AND last_error_at IS NOT NULL
+              AND (last_success_at IS NULL OR last_error_at > last_success_at)
             ORDER BY last_error_at DESC
             LIMIT 1
         """)).fetchone()
@@ -1902,7 +1903,7 @@ function renderRepoStatuses(items) {
     const current = item.runtime_current_pr ? 'PR #' + item.runtime_current_pr : '\u2014';
     const lastSync = item.last_success_at ? relTime(item.last_success_at) : 'Never';
     const cursor = item.last_pr_updated_at ? fmtDate(item.last_pr_updated_at) : '\u2014';
-    const errorText = item.runtime_error || item.last_error_message || '';
+    const errorText = item.runtime_error || (item.status === 'error' ? item.last_error_message : '') || '';
     const error = errorText ? esc(errorText.slice(0, 120)) : '\u2014';
 
     return '<div class="repo-status-card' + (item.status === 'excluded' ? ' excluded' : '') + '">' +
@@ -2314,7 +2315,13 @@ function update(d) {
 
   const box = $('err-box');
   box.style.display = sync.last_error_message ? 'block' : 'none';
-  if (sync.last_error_message) box.textContent = sync.last_error_message;
+  if (sync.last_error_message) {
+    let errHtml = esc(sync.last_error_message);
+    if (sync.last_error_message.includes('401') || sync.last_error_message.includes('Unauthorized')) {
+      errHtml += '<br><span style="font-size:11px;color:var(--yellow)">Tip: generate a new Classic Personal Access Token with \u201Crepo\u201D scope at GitHub \u2192 Settings \u2192 Developer settings \u2192 Tokens (classic), and update GITHUB_TOKEN in your .env file.</span>';
+    }
+    box.innerHTML = errHtml;
+  }
 
   if (activity && activity.length) {
     $('feed').innerHTML = activity.map(a =>
