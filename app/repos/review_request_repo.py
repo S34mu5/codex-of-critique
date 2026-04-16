@@ -31,6 +31,13 @@ def sync_review_requests(
         elif team:
             current_teams.add(team)
 
+    avatar_map: dict[str, str | None] = {}
+    for req in current_requests:
+        reviewer = req.get("requestedReviewer") or {}
+        login = reviewer.get("login")
+        if login:
+            avatar_map[login] = reviewer.get("avatarUrl")
+
     # Upsert current requests as pending
     for login in current_logins:
         stmt = insert(ReviewRequest).values(
@@ -38,12 +45,14 @@ def sync_review_requests(
             pull_request_id=pull_request_id,
             requested_reviewer_login=login,
             requested_team_name=None,
+            requested_reviewer_avatar_url=avatar_map.get(login),
             status="pending",
             completed_at=None,
         )
         stmt = stmt.on_duplicate_key_update(
             status="pending",
             completed_at=None,
+            requested_reviewer_avatar_url=avatar_map.get(login),
             updated_at=func.now(),
         )
         session.execute(stmt)

@@ -27,6 +27,7 @@ def upsert_pr_comment(
         github_node_id=github_node_id,
         github_database_id=github_database_id,
         author_login=author_login,
+        author_avatar_url=author_avatar_url,
         author_association=author_association,
         body=body,
         comment_created_at=comment_created_at,
@@ -34,6 +35,7 @@ def upsert_pr_comment(
     )
     stmt = stmt.on_duplicate_key_update(
         author_login=stmt.inserted.author_login,
+        author_avatar_url=stmt.inserted.author_avatar_url,
         author_association=stmt.inserted.author_association,
         body=stmt.inserted.body,
         comment_edited_at=stmt.inserted.comment_edited_at,

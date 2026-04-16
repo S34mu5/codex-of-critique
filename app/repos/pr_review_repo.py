@@ -24,12 +24,14 @@ def upsert_pr_review(
         pull_request_id=pull_request_id,
         github_node_id=github_node_id,
         author_login=author_login,
+        author_avatar_url=author_avatar_url,
         state=state,
         body=body,
         submitted_at=submitted_at,
     )
     stmt = stmt.on_duplicate_key_update(
         author_login=stmt.inserted.author_login,
+        author_avatar_url=stmt.inserted.author_avatar_url,
         state=stmt.inserted.state,
         body=stmt.inserted.body,
         submitted_at=stmt.inserted.submitted_at,

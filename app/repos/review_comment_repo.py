@@ -130,6 +130,7 @@ def upsert_review_comment(
         review_state=stmt.inserted.review_state,
         review_author_login=stmt.inserted.review_author_login,
         review_submitted_at=stmt.inserted.review_submitted_at,
+        comment_author_avatar_url=stmt.inserted.comment_author_avatar_url,
         raw_payload=stmt.inserted.raw_payload,
         updated_at=func.now(),
     )
