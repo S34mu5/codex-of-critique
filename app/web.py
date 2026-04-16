@@ -2481,16 +2481,18 @@ async function loadActivity(page) {
   btn.disabled = false; btn.textContent = 'Refresh';
 }
 
-function avatarImg(url, size) {
-  if (!url) return '';
-  return '<img class="user-avatar" src="' + esc(url) + '" style="width:' + (size||18) + 'px;height:' + (size||18) + 'px" onerror="this.style.display=\'none\'">';
+function avatarImg(url, size, login) {
+  const s = size || 18;
+  const src = url || (login ? 'https://github.com/' + encodeURIComponent(login) + '.png?size=' + (s * 2) : '');
+  if (!src) return '';
+  return '<img class="user-avatar" src="' + esc(src) + '" style="width:' + s + 'px;height:' + s + 'px" onerror="this.src=\'https://github.githubassets.com/assets/GitHub-Mark-ea2971cee799.png\';this.onerror=null">';
 }
 
 function renderActivityCard(r, cat) {
   if (cat === 'comments') {
     return '<a class="comment-card" href="' + ghUrl(r.repo_owner, r.repo_name, r.pr_number) + '" target="_blank">' +
       '<div class="cc-head">' +
-        avatarImg(r.author_avatar_url, 16) +
+        avatarImg(r.author_avatar_url, 16, r.author_login) +
         '<span class="cc-author">@' + esc(r.author_login || '\u2014') + '</span>' +
         '<span class="cc-pr">#' + r.pr_number + '</span>' +
         '<span style="font-size:10px;color:var(--muted)">' + esc(r.repo_owner + '/' + r.repo_name) + '</span>' +
@@ -2501,18 +2503,18 @@ function renderActivityCard(r, cat) {
   }
   let style = '', meta = '';
   if (cat === 'pending_reviews') {
-    meta = '<span class="ac-meta">' + avatarImg(r.pr_author_avatar_url, 14) + ' @' + esc(r.pr_author || '') + ' requested review from ' + avatarImg(r.requested_reviewer_avatar_url, 14) + ' @' + esc(r.requested_reviewer_login || '') + '</span>';
+    meta = '<span class="ac-meta">' + avatarImg(r.pr_author_avatar_url, 14, r.pr_author) + ' @' + esc(r.pr_author || '') + ' requested review from ' + avatarImg(r.requested_reviewer_avatar_url, 14, r.requested_reviewer_login) + ' @' + esc(r.requested_reviewer_login || '') + '</span>';
   } else if (cat === 'changes_forgot_rerequest') {
     style = ' style="border-color:#f59e0b40"';
     meta = '<span class="ac-meta" style="color:var(--yellow)">@' + esc(r.pr_author || r.reviewer || '') + ' \u2192 @' + esc(r.reviewer || '') + ' \u2014 committed ' + relTime(r.last_commit_at) + '</span>';
   } else if (cat === 'changes_addressed') {
     style = ' style="border-color:#10b98140"';
-    meta = '<span class="ac-meta" style="color:var(--green)">' + avatarImg(r.pr_author_avatar_url, 14) + ' @' + esc(r.pr_author || '') + ' addressed changes from ' + avatarImg(r.reviewer_avatar_url, 14) + ' @' + esc(r.reviewer || '') + '</span>';
+    meta = '<span class="ac-meta" style="color:var(--green)">' + avatarImg(r.pr_author_avatar_url, 14, r.pr_author) + ' @' + esc(r.pr_author || '') + ' addressed changes from ' + avatarImg(r.reviewer_avatar_url, 14, r.reviewer) + ' @' + esc(r.reviewer || '') + '</span>';
   } else if (cat === 'changes_merged') {
     style = ' style="opacity:.7"';
     meta = '<span class="ac-meta" style="color:var(--muted)">merged ' + relTime(r.merged_at_github) + '</span>';
   } else if (cat === 'changes_not_addressed') {
-    meta = '<span class="ac-meta">' + avatarImg(r.reviewer_avatar_url, 14) + ' @' + esc(r.reviewer || '') + ' requested changes to ' + avatarImg(r.pr_author_avatar_url, 14) + ' @' + esc(r.pr_author || '') + ' \u2014 ' + relTime(r.review_date) + '</span>';
+    meta = '<span class="ac-meta">' + avatarImg(r.reviewer_avatar_url, 14, r.reviewer) + ' @' + esc(r.reviewer || '') + ' requested changes to ' + avatarImg(r.pr_author_avatar_url, 14, r.pr_author) + ' @' + esc(r.pr_author || '') + ' \u2014 ' + relTime(r.review_date) + '</span>';
   } else if (cat === 'merge_conflicts') {
     style = ' style="border-color:#ef444440"';
     meta = '<span class="ac-meta" style="color:var(--red,#ef4444)">conflict detected ' + relTime(r.mergeable_updated_at) + '</span>';
@@ -2520,7 +2522,7 @@ function renderActivityCard(r, cat) {
     meta = '<span class="ac-meta">' + relTime(r.updated_at_github) + '</span>';
   }
   return '<a class="activity-card"' + style + ' href="' + ghUrl(r.repo_owner, r.repo_name, r.pr_number) + '" target="_blank">' +
-    avatarImg(r.pr_author_avatar_url, 16) +
+    avatarImg(r.pr_author_avatar_url, 16, r.pr_author) +
     '<span class="ac-repo">' + esc(r.repo_owner + '/' + r.repo_name) + '</span>' +
     '<span class="ac-pr">#' + r.pr_number + '</span>' +
     '<span class="ac-title">' + esc(r.pr_title) + '</span>' +
