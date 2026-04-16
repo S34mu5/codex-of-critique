@@ -89,6 +89,7 @@ def fetch_and_persist_threads(
                     review_author_login=review_author.get("login"),
                     review_submitted_at=_parse_dt(review.get("submittedAt")),
                     comment_author_login=author.get("login"),
+                    comment_author_avatar_url=author.get("avatarUrl"),
                     author_association=c_node.get("authorAssociation"),
                     path=comment_path,
                     file_extension=file_extension_from_path(comment_path),

@@ -65,6 +65,7 @@ def _resolve_unknown_mergeables(
                         raw_payload=pr_info["raw_payload"],
                         mergeable=mergeable,
                         mergeable_updated_at=datetime.utcnow(),
+                        author_avatar_url=pr_info.get("author_avatar_url"),
                     )
                     logger.info("mergeable_resolved", extra={"pr_number": pr_info["number"], "mergeable": mergeable})
                 else:
@@ -131,6 +132,7 @@ def fetch_and_persist_prs(
                 raw_payload=node,
                 mergeable=mergeable,
                 mergeable_updated_at=now,
+                author_avatar_url=author.get("avatarUrl"),
             )
 
             if mergeable == "UNKNOWN" and node.get("state") == "OPEN":
@@ -139,6 +141,7 @@ def fetch_and_persist_prs(
                     "github_node_id": node["id"],
                     "title": node["title"],
                     "author_login": author.get("login"),
+                    "author_avatar_url": author.get("avatarUrl"),
                     "review_decision": node.get("reviewDecision"),
                     "state": node.get("state"),
                     "created_at_github": _parse_dt(node["createdAt"]),
