@@ -14,11 +14,11 @@ def upsert_pr_comment(
     github_node_id: str,
     github_database_id: int | None,
     author_login: str | None,
-    author_avatar_url: str | None = None,
-    author_association: str | None = None,
+    author_association: str | None,
     body: str | None,
     comment_created_at: datetime,
     comment_edited_at: datetime | None,
+    author_avatar_url: str | None = None,
 ) -> int:
     """Upsert a PR comment and return its database id."""
     stmt = insert(PrComment).values(

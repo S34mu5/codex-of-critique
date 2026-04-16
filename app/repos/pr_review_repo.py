@@ -13,10 +13,10 @@ def upsert_pr_review(
     pull_request_id: int,
     github_node_id: str,
     author_login: str | None,
-    author_avatar_url: str | None = None,
-    state: str | None = None,
+    state: str | None,
     body: str | None,
     submitted_at: datetime | None,
+    author_avatar_url: str | None = None,
 ) -> int:
     """Upsert a PR review and return its database id."""
     stmt = insert(PrReview).values(

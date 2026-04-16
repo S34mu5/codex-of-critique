@@ -73,8 +73,7 @@ def upsert_review_comment(
     review_author_login: str | None,
     review_submitted_at: datetime | None,
     comment_author_login: str | None,
-    comment_author_avatar_url: str | None = None,
-    author_association: str | None = None,
+    author_association: str | None,
     path: str,
     file_extension: str | None,
     body: str,
@@ -88,6 +87,7 @@ def upsert_review_comment(
     comment_created_at: datetime,
     comment_edited_at: datetime | None,
     raw_payload: dict[str, Any] | None,
+    comment_author_avatar_url: str | None = None,
 ) -> int:
     """Upsert a review comment and return its database id."""
     stmt = insert(ReviewComment).values(
