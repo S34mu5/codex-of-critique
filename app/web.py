@@ -717,12 +717,34 @@ def filters() -> dict:
                 text("SELECT DISTINCT owner, name FROM repositories ORDER BY owner, name")
             ).fetchall()
         ]
-        pr_authors = [r[0] for r in session.execute(
-            text("SELECT DISTINCT author_login FROM pull_requests WHERE author_login IS NOT NULL ORDER BY author_login")
-        ).fetchall()]
-        reviewers = [r[0] for r in session.execute(
-            text("SELECT DISTINCT comment_author_login FROM review_comments WHERE comment_author_login IS NOT NULL ORDER BY comment_author_login")
-        ).fetchall()]
+        pr_authors = [
+            {"login": r.author_login, "avatar_url": r.author_avatar_url}
+            for r in session.execute(text("""
+                SELECT author_login, author_avatar_url
+                FROM (
+                    SELECT author_login, author_avatar_url,
+                           ROW_NUMBER() OVER (PARTITION BY author_login ORDER BY updated_at_github DESC) AS rn
+                    FROM pull_requests
+                    WHERE author_login IS NOT NULL
+                ) ranked
+                WHERE rn = 1
+                ORDER BY author_login
+            """)).fetchall()
+        ]
+        reviewers = [
+            {"login": r.comment_author_login, "avatar_url": r.comment_author_avatar_url}
+            for r in session.execute(text("""
+                SELECT comment_author_login, comment_author_avatar_url
+                FROM (
+                    SELECT comment_author_login, comment_author_avatar_url,
+                           ROW_NUMBER() OVER (PARTITION BY comment_author_login ORDER BY comment_created_at DESC) AS rn
+                    FROM review_comments
+                    WHERE comment_author_login IS NOT NULL
+                ) ranked
+                WHERE rn = 1
+                ORDER BY comment_author_login
+            """)).fetchall()
+        ]
     return {"repositories": repos, "pr_authors": pr_authors, "reviewers": reviewers}
 
 
