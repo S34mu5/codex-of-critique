@@ -22,6 +22,7 @@ class PullRequest(Base):
     __table_args__ = (
         UniqueConstraint("repository_id", "number", name="uq_pull_requests_repo_number"),
         Index("idx_pull_requests_updated", "repository_id", "updated_at_github"),
+        Index("idx_pull_requests_state_mergeable", "state", "mergeable"),
     )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
@@ -38,6 +39,8 @@ class PullRequest(Base):
     updated_at_github: Mapped[datetime] = mapped_column(DateTime, nullable=False)
     merged_at_github: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     last_commit_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    mergeable: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    mergeable_updated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     raw_payload: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, server_default=func.now()

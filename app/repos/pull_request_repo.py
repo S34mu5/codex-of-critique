@@ -21,6 +21,8 @@ def upsert_pull_request(
     updated_at_github: datetime,
     merged_at_github: datetime | None,
     raw_payload: dict[str, Any] | None,
+    mergeable: str | None = None,
+    mergeable_updated_at: datetime | None = None,
 ) -> int:
     """Upsert a pull request and return its database id."""
     stmt = insert(PullRequest).values(
@@ -35,6 +37,8 @@ def upsert_pull_request(
         updated_at_github=updated_at_github,
         merged_at_github=merged_at_github,
         raw_payload=raw_payload,
+        mergeable=mergeable,
+        mergeable_updated_at=mergeable_updated_at,
     )
     stmt = stmt.on_duplicate_key_update(
         title=stmt.inserted.title,
@@ -44,6 +48,8 @@ def upsert_pull_request(
         updated_at_github=stmt.inserted.updated_at_github,
         merged_at_github=stmt.inserted.merged_at_github,
         raw_payload=stmt.inserted.raw_payload,
+        mergeable=stmt.inserted.mergeable,
+        mergeable_updated_at=stmt.inserted.mergeable_updated_at,
         updated_at=func.now(),
     )
     session.execute(stmt)
