@@ -2477,10 +2477,16 @@ async function loadActivity(page) {
   btn.disabled = false; btn.textContent = 'Refresh';
 }
 
+function avatarImg(url, size) {
+  if (!url) return '';
+  return '<img class="user-avatar" src="' + esc(url) + '" style="width:' + (size||18) + 'px;height:' + (size||18) + 'px" onerror="this.style.display=\'none\'">';
+}
+
 function renderActivityCard(r, cat) {
   if (cat === 'comments') {
     return '<a class="comment-card" href="' + ghUrl(r.repo_owner, r.repo_name, r.pr_number) + '" target="_blank">' +
       '<div class="cc-head">' +
+        avatarImg(r.author_avatar_url, 16) +
         '<span class="cc-author">@' + esc(r.author_login || '\u2014') + '</span>' +
         '<span class="cc-pr">#' + r.pr_number + '</span>' +
         '<span style="font-size:10px;color:var(--muted)">' + esc(r.repo_owner + '/' + r.repo_name) + '</span>' +
@@ -2508,6 +2514,7 @@ function renderActivityCard(r, cat) {
     meta = '<span class="ac-meta">' + relTime(r.updated_at_github) + '</span>';
   }
   return '<a class="activity-card"' + style + ' href="' + ghUrl(r.repo_owner, r.repo_name, r.pr_number) + '" target="_blank">' +
+    avatarImg(r.pr_author_avatar_url, 16) +
     '<span class="ac-repo">' + esc(r.repo_owner + '/' + r.repo_name) + '</span>' +
     '<span class="ac-pr">#' + r.pr_number + '</span>' +
     '<span class="ac-title">' + esc(r.pr_title) + '</span>' +
@@ -2643,7 +2650,10 @@ function renderResults(d) {
 
     return '<div class="rc-card">' +
       '<div class="rc-head">' +
-        '<div class="rc-avatar">' + esc(initials) + '</div>' +
+        (r.comment_author_avatar_url
+          ? '<img class="user-avatar" src="' + esc(r.comment_author_avatar_url) + '" style="width:28px;height:28px" onerror="this.style.display=\'none\';this.nextElementSibling.style.display=\'flex\'">' +
+            '<div class="rc-avatar" style="display:none">' + esc(initials) + '</div>'
+          : '<div class="rc-avatar">' + esc(initials) + '</div>') +
         '<span class="rc-author">' + esc(r.comment_author_login || '\u2014') + '</span>' +
         '<span class="rc-repo-badge">' + esc(r.repo_owner + '/' + r.repo_name) + '</span>' +
         '<span class="rc-pr-badge">#' + r.pr_number + '</span>' +
