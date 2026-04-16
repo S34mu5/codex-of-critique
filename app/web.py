@@ -930,9 +930,11 @@ def activity(
         if not category or category == "changes_not_addressed":
             rows = session.execute(text(f"""
                 SELECT DISTINCT pr.number AS pr_number, pr.title AS pr_title,
-                       pr.updated_at_github, pr.author_avatar_url AS pr_author_avatar_url,
+                       pr.updated_at_github,
+                       pr.author_login AS pr_author, pr.author_avatar_url AS pr_author_avatar_url,
                        rp.name AS repo_name, rp.owner AS repo_owner,
-                       rev.author_login AS reviewer, rev.submitted_at AS review_date
+                       rev.author_login AS reviewer, rev.author_avatar_url AS reviewer_avatar_url,
+                       rev.submitted_at AS review_date
                 FROM pr_reviews rev
                 JOIN pull_requests pr ON pr.id = rev.pull_request_id
                 JOIN repositories rp ON rp.id = pr.repository_id
@@ -993,9 +995,11 @@ def activity(
         if not category or category == "changes_addressed":
             rows = session.execute(text(f"""
                 SELECT DISTINCT pr.number AS pr_number, pr.title AS pr_title,
-                       pr.updated_at_github, pr.author_avatar_url AS pr_author_avatar_url,
+                       pr.updated_at_github,
+                       pr.author_login AS pr_author, pr.author_avatar_url AS pr_author_avatar_url,
                        rp.name AS repo_name, rp.owner AS repo_owner,
-                       rev.author_login AS reviewer, rev.submitted_at AS review_date
+                       rev.author_login AS reviewer, rev.author_avatar_url AS reviewer_avatar_url,
+                       rev.submitted_at AS review_date
                 FROM pr_reviews rev
                 JOIN pull_requests pr ON pr.id = rev.pull_request_id
                 JOIN repositories rp ON rp.id = pr.repository_id
@@ -2496,17 +2500,19 @@ function renderActivityCard(r, cat) {
     '</a>';
   }
   let style = '', meta = '';
-  if (cat === 'changes_forgot_rerequest') {
+  if (cat === 'pending_reviews') {
+    meta = '<span class="ac-meta">' + avatarImg(r.pr_author_avatar_url, 14) + ' @' + esc(r.pr_author || '') + ' requested review from ' + avatarImg(r.requested_reviewer_avatar_url, 14) + ' @' + esc(r.requested_reviewer_login || '') + '</span>';
+  } else if (cat === 'changes_forgot_rerequest') {
     style = ' style="border-color:#f59e0b40"';
     meta = '<span class="ac-meta" style="color:var(--yellow)">@' + esc(r.pr_author || r.reviewer || '') + ' \u2192 @' + esc(r.reviewer || '') + ' \u2014 committed ' + relTime(r.last_commit_at) + '</span>';
   } else if (cat === 'changes_addressed') {
     style = ' style="border-color:#10b98140"';
-    meta = '<span class="ac-meta" style="color:var(--green)">@' + esc(r.reviewer || '') + ' re-review pending</span>';
+    meta = '<span class="ac-meta" style="color:var(--green)">' + avatarImg(r.pr_author_avatar_url, 14) + ' @' + esc(r.pr_author || '') + ' addressed changes from ' + avatarImg(r.reviewer_avatar_url, 14) + ' @' + esc(r.reviewer || '') + '</span>';
   } else if (cat === 'changes_merged') {
     style = ' style="opacity:.7"';
     meta = '<span class="ac-meta" style="color:var(--muted)">merged ' + relTime(r.merged_at_github) + '</span>';
   } else if (cat === 'changes_not_addressed') {
-    meta = '<span class="ac-meta">@' + esc(r.reviewer || '') + ' \u2014 ' + relTime(r.review_date) + '</span>';
+    meta = '<span class="ac-meta">' + avatarImg(r.reviewer_avatar_url, 14) + ' @' + esc(r.reviewer || '') + ' requested changes to ' + avatarImg(r.pr_author_avatar_url, 14) + ' @' + esc(r.pr_author || '') + ' \u2014 ' + relTime(r.review_date) + '</span>';
   } else if (cat === 'merge_conflicts') {
     style = ' style="border-color:#ef444440"';
     meta = '<span class="ac-meta" style="color:var(--red,#ef4444)">conflict detected ' + relTime(r.mergeable_updated_at) + '</span>';
