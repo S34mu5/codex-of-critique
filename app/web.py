@@ -827,11 +827,11 @@ def search(
 
         data_sql = f"""
             SELECT rc.id, rc.github_node_id, rc.path, rc.file_extension,
-                   rc.comment_author_login, rc.body, rc.diff_hunk,
+                   rc.comment_author_login, rc.comment_author_avatar_url, rc.body, rc.diff_hunk,
                    rc.line, rc.start_line, rc.comment_created_at,
                    rc.comment_commit_oid,
                    pr.number AS pr_number, pr.title AS pr_title,
-                   pr.author_login AS pr_author,
+                   pr.author_login AS pr_author, pr.author_avatar_url AS pr_author_avatar_url,
                    rp.name AS repo_name, rp.owner AS repo_owner
             FROM review_comments rc
             JOIN pull_requests pr ON pr.id = rc.pull_request_id
@@ -910,8 +910,10 @@ def activity(
             rows = session.execute(text(f"""
                 SELECT pr.number AS pr_number, pr.title AS pr_title,
                        pr.updated_at_github, pr.author_login AS pr_author,
+                       pr.author_avatar_url AS pr_author_avatar_url,
                        rp.name AS repo_name, rp.owner AS repo_owner,
-                       rr.requested_reviewer_login, rr.created_at AS requested_at
+                       rr.requested_reviewer_login, rr.requested_reviewer_avatar_url,
+                       rr.created_at AS requested_at
                 FROM review_requests rr
                 JOIN pull_requests pr ON pr.id = rr.pull_request_id
                 JOIN repositories rp ON rp.id = pr.repository_id
@@ -928,7 +930,8 @@ def activity(
         if not category or category == "changes_not_addressed":
             rows = session.execute(text(f"""
                 SELECT DISTINCT pr.number AS pr_number, pr.title AS pr_title,
-                       pr.updated_at_github, rp.name AS repo_name, rp.owner AS repo_owner,
+                       pr.updated_at_github, pr.author_avatar_url AS pr_author_avatar_url,
+                       rp.name AS repo_name, rp.owner AS repo_owner,
                        rev.author_login AS reviewer, rev.submitted_at AS review_date
                 FROM pr_reviews rev
                 JOIN pull_requests pr ON pr.id = rev.pull_request_id
@@ -959,7 +962,7 @@ def activity(
             rows = session.execute(text(f"""
                 SELECT DISTINCT pr.number AS pr_number, pr.title AS pr_title,
                        pr.updated_at_github, rp.name AS repo_name, rp.owner AS repo_owner,
-                       pr.author_login AS pr_author,
+                       pr.author_login AS pr_author, pr.author_avatar_url AS pr_author_avatar_url,
                        rev.author_login AS reviewer, rev.submitted_at AS review_date,
                        pr.last_commit_at
                 FROM pr_reviews rev
@@ -990,7 +993,8 @@ def activity(
         if not category or category == "changes_addressed":
             rows = session.execute(text(f"""
                 SELECT DISTINCT pr.number AS pr_number, pr.title AS pr_title,
-                       pr.updated_at_github, rp.name AS repo_name, rp.owner AS repo_owner,
+                       pr.updated_at_github, pr.author_avatar_url AS pr_author_avatar_url,
+                       rp.name AS repo_name, rp.owner AS repo_owner,
                        rev.author_login AS reviewer, rev.submitted_at AS review_date
                 FROM pr_reviews rev
                 JOIN pull_requests pr ON pr.id = rev.pull_request_id
@@ -1026,7 +1030,8 @@ def activity(
                 """), params).scalar()
             rows = session.execute(text(f"""
                 SELECT pr.number AS pr_number, pr.title AS pr_title,
-                       pr.merged_at_github, rp.name AS repo_name, rp.owner AS repo_owner
+                       pr.merged_at_github, pr.author_avatar_url AS pr_author_avatar_url,
+                       rp.name AS repo_name, rp.owner AS repo_owner
                 FROM pull_requests pr
                 JOIN repositories rp ON rp.id = pr.repository_id
                 WHERE pr.state = 'MERGED'
@@ -1049,7 +1054,7 @@ def activity(
                 """), params).scalar()
             rows = session.execute(text(f"""
                 SELECT pr.number AS pr_number, pr.title AS pr_title,
-                       pr.author_login AS pr_author,
+                       pr.author_login AS pr_author, pr.author_avatar_url AS pr_author_avatar_url,
                        pr.updated_at_github, pr.mergeable_updated_at,
                        rp.name AS repo_name, rp.owner AS repo_owner
                 FROM pull_requests pr
@@ -1069,7 +1074,8 @@ def activity(
                 (SELECT 'comment' AS type, pc.author_login, pc.body,
                         pc.comment_created_at AS ts,
                         pr.number AS pr_number, pr.title AS pr_title,
-                        rp.name AS repo_name, rp.owner AS repo_owner
+                        rp.name AS repo_name, rp.owner AS repo_owner,
+                        pc.author_avatar_url
                  FROM pr_comments pc
                  JOIN pull_requests pr ON pr.id = pc.pull_request_id
                  JOIN repositories rp ON rp.id = pc.repository_id
@@ -1079,7 +1085,8 @@ def activity(
                 (SELECT 'review_comment' AS type, rc.comment_author_login AS author_login,
                         rc.body, rc.comment_created_at AS ts,
                         pr.number AS pr_number, pr.title AS pr_title,
-                        rp.name AS repo_name, rp.owner AS repo_owner
+                        rp.name AS repo_name, rp.owner AS repo_owner,
+                        rc.comment_author_avatar_url AS author_avatar_url
                  FROM review_comments rc
                  JOIN pull_requests pr ON pr.id = rc.pull_request_id
                  JOIN repositories rp ON rp.id = rc.repository_id
