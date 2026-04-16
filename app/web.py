@@ -16,6 +16,8 @@ from sqlalchemy import text
 from app.config import settings
 from app.db import SessionLocal
 from app.services.sync_service import run_repository_sync
+from app.services.backfill_mergeable_service import run_backfill
+from app.clients.github_graphql import GitHubGraphQLClient
 
 app = FastAPI(title="Codex-of-Critique Dashboard")
 
@@ -1013,6 +1015,32 @@ def activity(
             """), params).fetchall()
             result["changes_merged"] = [_row_to_dict(r) for r in rows]
 
+        # --- Merge conflicts ---
+        if not category or category == "merge_conflicts":
+            if category == "merge_conflicts":
+                result["total"] = session.execute(text(f"""
+                    SELECT COUNT(*) FROM pull_requests pr
+                    JOIN repositories rp ON rp.id = pr.repository_id
+                    WHERE pr.state = 'OPEN' AND pr.mergeable = 'CONFLICTING'
+                      AND (:username = '' OR pr.author_login = :username)
+                      {repo_where}
+                """), params).scalar()
+            rows = session.execute(text(f"""
+                SELECT pr.number AS pr_number, pr.title AS pr_title,
+                       pr.author_login AS pr_author,
+                       pr.updated_at_github, pr.mergeable_updated_at,
+                       rp.name AS repo_name, rp.owner AS repo_owner
+                FROM pull_requests pr
+                JOIN repositories rp ON rp.id = pr.repository_id
+                WHERE pr.state = 'OPEN'
+                  AND pr.mergeable = 'CONFLICTING'
+                  AND (:username = '' OR pr.author_login = :username)
+                  {repo_where}
+                ORDER BY pr.updated_at_github DESC
+                LIMIT :limit OFFSET :offset
+            """), params).fetchall()
+            result["merge_conflicts"] = [_row_to_dict(r) for r in rows]
+
         # --- Recent comments ---
         if not category or category == "comments":
             rows = session.execute(text(f"""
@@ -1041,6 +1069,19 @@ def activity(
             result["comments"] = [_row_to_dict(r) for r in rows]
 
     return {"username": username, "sections": result, "page": page, "per_page": per_page, "category": category}
+
+
+@app.post("/api/backfill-mergeable")
+def backfill_mergeable() -> dict:
+    gql = GitHubGraphQLClient()
+    try:
+        with SessionLocal() as session:
+            summary = run_backfill(session, gql)
+        return {"status": "ok", **summary}
+    except Exception as exc:
+        return {"status": "error", "message": str(exc)}
+    finally:
+        gql.close()
 
 
 def _row_to_dict(row) -> dict:
@@ -1536,6 +1577,7 @@ footer{display:flex;align-items:center;justify-content:center;gap:16px;font-size
       <option value="changes_forgot_rerequest">Changes — Not Re-requested</option>
       <option value="changes_addressed">Changes — Addressed</option>
       <option value="changes_merged">Changes — Merged</option>
+      <option value="merge_conflicts">Merge Conflicts</option>
       <option value="comments">Recent Comments</option>
     </select>
     <details class="repo-picker single-picker">
@@ -2325,6 +2367,7 @@ const ACT_SECTIONS = [
   { key: 'changes_forgot_rerequest', cat: 'changes_forgot_rerequest', title: 'Changes \u2014 Not Re-requested' },
   { key: 'changes_addressed',        cat: 'changes_addressed',        title: 'Changes \u2014 Addressed' },
   { key: 'changes_merged',           cat: 'changes_merged',           title: 'Merged PRs' },
+  { key: 'merge_conflicts',          cat: 'merge_conflicts',          title: 'Merge Conflicts' },
   { key: 'comments',                 cat: 'comments',                 title: 'Recent Comments' },
 ];
 
@@ -2402,6 +2445,9 @@ function renderActivityCard(r, cat) {
     meta = '<span class="ac-meta" style="color:var(--muted)">merged ' + relTime(r.merged_at_github) + '</span>';
   } else if (cat === 'changes_not_addressed') {
     meta = '<span class="ac-meta">@' + esc(r.reviewer || '') + ' \u2014 ' + relTime(r.review_date) + '</span>';
+  } else if (cat === 'merge_conflicts') {
+    style = ' style="border-color:#ef444440"';
+    meta = '<span class="ac-meta" style="color:var(--red,#ef4444)">conflict detected ' + relTime(r.mergeable_updated_at) + '</span>';
   } else {
     meta = '<span class="ac-meta">' + relTime(r.updated_at_github) + '</span>';
   }
