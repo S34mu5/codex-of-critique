@@ -4,7 +4,36 @@ from sqlalchemy import func
 from sqlalchemy.dialects.mysql import insert
 from sqlalchemy.orm import Session
 
+from app.models.pr_review import PrReview
 from app.models.review_request import ReviewRequest
+
+
+def _get_approved_logins(session: Session, pull_request_id: int) -> set[str]:
+    """Return logins whose latest review on this PR is APPROVED."""
+    from sqlalchemy import desc
+
+    latest_reviews = (
+        session.query(
+            PrReview.author_login,
+            PrReview.state,
+        )
+        .filter(
+            PrReview.pull_request_id == pull_request_id,
+            PrReview.author_login.isnot(None),
+            PrReview.state.in_(["APPROVED", "CHANGES_REQUESTED", "DISMISSED"]),
+        )
+        .order_by(PrReview.author_login, desc(PrReview.submitted_at))
+        .all()
+    )
+
+    seen: set[str] = set()
+    approved: set[str] = set()
+    for login, state in latest_reviews:
+        if login not in seen:
+            seen.add(login)
+            if state == "APPROVED":
+                approved.add(login)
+    return approved
 
 
 def sync_review_requests(
@@ -18,6 +47,7 @@ def sync_review_requests(
     Compares current GitHub requests with DB state:
     - Insert new requests as pending
     - Mark requests no longer present as completed
+    - Mark requests as completed if reviewer's latest review is APPROVED
     """
     # Build set of current reviewer logins/team names from GitHub
     current_logins: set[str] = set()
@@ -84,6 +114,8 @@ def sync_review_requests(
             )
 
     # Mark old requests as completed
+    approved_logins = _get_approved_logins(session, pull_request_id)
+
     pending_rows = (
         session.query(ReviewRequest)
         .filter_by(pull_request_id=pull_request_id, status="pending")
@@ -92,6 +124,9 @@ def sync_review_requests(
     now = datetime.utcnow()
     for row in pending_rows:
         if row.requested_reviewer_login and row.requested_reviewer_login not in current_logins:
+            row.status = "completed"
+            row.completed_at = now
+        elif row.requested_reviewer_login and row.requested_reviewer_login in approved_logins:
             row.status = "completed"
             row.completed_at = now
         elif row.requested_team_name and row.requested_team_name not in current_teams:

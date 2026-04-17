@@ -3,13 +3,15 @@ from datetime import datetime
 
 from sqlalchemy.orm import Session
 
-from app.clients.github_graphql import GitHubGraphQLClient
+from app.clients.github_graphql import GitHubGraphQLClient, GraphQLError
 from app.models.pull_request import PullRequest
 from app.repos.pr_review_repo import upsert_pr_review
 from app.repos.pr_comment_repo import upsert_pr_comment
 from app.repos.review_request_repo import sync_review_requests
 
 logger = logging.getLogger(__name__)
+
+_INSUFFICIENT_SCOPES = "INSUFFICIENT_SCOPES"
 
 
 def _parse_dt(value: str | None) -> datetime | None:
@@ -28,14 +30,18 @@ def fetch_and_persist_pr_extras(
     pr_number: int,
 ) -> None:
     """Fetch reviews, PR comments, and review requests for a PR and persist them."""
-    data = gql.execute_query_file(
-        "pull_request_extras",
-        {
-            "owner": owner,
-            "name": repo_name,
-            "number": pr_number,
-        },
-    )
+    variables = {"owner": owner, "name": repo_name, "number": pr_number}
+    try:
+        data = gql.execute_query_file("pull_request_extras", variables)
+    except GraphQLError as exc:
+        if any(e.get("type") == _INSUFFICIENT_SCOPES for e in exc.errors):
+            logger.warning(
+                "pr_extras_scope_fallback",
+                extra={"owner": owner, "repo": repo_name, "pr": pr_number},
+            )
+            data = gql.execute_query_file("pull_request_extras_no_teams", variables)
+        else:
+            raise
 
     pr_data = data["repository"]["pullRequest"]
 
