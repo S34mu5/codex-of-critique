@@ -52,7 +52,7 @@ try:
             return await call_next(request)
 
     app.add_middleware(McpGuardMiddleware)
-    _mcp_app = _mcp_server.streamable_http_app()
+    _mcp_app = _mcp_server.sse_app(mount_path="/mcp")
     app.mount("/mcp", _mcp_app)
     _MCP_AVAILABLE = True
 except ImportError:
