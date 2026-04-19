@@ -11,4 +11,3 @@ fastapi==0.115.5
 uvicorn==0.32.1
 croniter==2.0.7
 mcp==1.9.4
-fastmcp-mount==0.2.0
