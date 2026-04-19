@@ -20,7 +20,7 @@ The MCP server is now available at `http://localhost:8080/mcp`.
 
 ## Connecting Claude Code
 
-Add this to your Claude Code MCP configuration (`.claude/settings.json` or project-level `.claude/settings.json`):
+Add this to your Claude Code MCP configuration (`~/.claude/.mcp.json` for global access, or `.mcp.json` in the project root):
 
 ```json
 {
