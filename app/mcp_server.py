@@ -166,16 +166,27 @@ def _handle_search_reviews(
         rows = session.execute(text(data_sql), params).fetchall()
 
         results = []
-        for row in rows:
-            r = dict(row._mapping)
+        row_dicts = [dict(row._mapping) for row in rows]
+        comment_ids = [r["id"] for r in row_dicts]
+
+        snippets_by_comment: dict = {}
+        if comment_ids:
+            placeholders = ",".join(f":cid_{i}" for i in range(len(comment_ids)))
+            snippet_params = {f"cid_{i}": cid for i, cid in enumerate(comment_ids)}
             snippet_rows = session.execute(
                 text(
-                    "SELECT snippet_type, snippet_text, start_line, end_line "
-                    "FROM code_snippets WHERE review_comment_id = :cid"
+                    f"SELECT review_comment_id, snippet_type, snippet_text, start_line, end_line "
+                    f"FROM code_snippets WHERE review_comment_id IN ({placeholders})"
                 ),
-                {"cid": r["id"]},
+                snippet_params,
             ).fetchall()
-            r["snippets"] = [dict(s._mapping) for s in snippet_rows]
+            for s in snippet_rows:
+                sm = dict(s._mapping)
+                cid = sm.pop("review_comment_id")
+                snippets_by_comment.setdefault(cid, []).append(sm)
+
+        for r in row_dicts:
+            r["snippets"] = snippets_by_comment.get(r["id"], [])
             for k, v in r.items():
                 if isinstance(v, datetime):
                     r[k] = v.isoformat()

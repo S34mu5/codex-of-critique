@@ -49,6 +49,7 @@ class TestSearchReviewsBasicCommentQ(unittest.TestCase):
         # Snippet query → one snippet
         fake_snippet = MagicMock()
         fake_snippet._mapping = {
+            "review_comment_id": 42,  # matches the fake_row id above
             "snippet_type": "blob_excerpt",
             "snippet_text": "x = (i for i in range(10))",
             "start_line": 9,
@@ -525,6 +526,95 @@ class TestGetFiltersTool(unittest.TestCase):
         self.assertIn("repositories", parsed)
         self.assertEqual(parsed["repositories"], ["myorg/myrepo"])
         mock_handler.assert_called_once()
+
+
+class TestSearchReviewsNoPlusOneQueries(unittest.TestCase):
+    """Assert that search_reviews issues exactly 3 DB calls for N results (no N+1)."""
+
+    @patch("app.mcp_server._get_mcp_default_reviewers")
+    @patch("app.mcp_server.SessionLocal")
+    def test_exactly_three_db_calls_for_page_of_three(
+        self, mock_session_cls, mock_get_default_reviewers
+    ):
+        from app.mcp_server import _handle_search_reviews
+
+        mock_get_default_reviewers.return_value = []
+
+        mock_session = MagicMock()
+        mock_session_cls.return_value.__enter__ = MagicMock(return_value=mock_session)
+        mock_session_cls.return_value.__exit__ = MagicMock(return_value=False)
+
+        # Count query → total = 3
+        mock_count = MagicMock()
+        mock_count.scalar.return_value = 3
+
+        # Data query → three rows
+        def make_row(row_id):
+            row = MagicMock()
+            row._mapping = {
+                "id": row_id,
+                "github_node_id": f"RC_{row_id}",
+                "path": "src/foo.py",
+                "file_extension": "py",
+                "comment_author_login": "alice",
+                "comment_author_avatar_url": "https://example.com/alice.png",
+                "body": f"comment {row_id}",
+                "diff_hunk": "@@ -1,3 +1,3 @@",
+                "line": row_id,
+                "start_line": None,
+                "comment_created_at": None,
+                "comment_commit_oid": "abc123",
+                "pr_number": 1,
+                "pr_title": "PR",
+                "pr_author": "bob",
+                "pr_author_avatar_url": "https://example.com/bob.png",
+                "repo_name": "myrepo",
+                "repo_owner": "myorg",
+            }
+            return row
+
+        mock_data = MagicMock()
+        mock_data.fetchall.return_value = [make_row(1), make_row(2), make_row(3)]
+
+        # Snippet batch query → snippets for comments 1 and 3 only
+        def make_snippet(comment_id, stype):
+            s = MagicMock()
+            s._mapping = {
+                "review_comment_id": comment_id,
+                "snippet_type": stype,
+                "snippet_text": f"code for {comment_id}",
+                "start_line": 1,
+                "end_line": 5,
+            }
+            return s
+
+        mock_snippets = MagicMock()
+        mock_snippets.fetchall.return_value = [
+            make_snippet(1, "diff_hunk"),
+            make_snippet(3, "blob_excerpt"),
+        ]
+
+        # Exactly 3 calls: count, data, snippet batch
+        mock_session.execute.side_effect = [mock_count, mock_data, mock_snippets]
+
+        result = _handle_search_reviews(reviewers=[])
+
+        # Should have been exactly 3 DB calls — not N+1 (which would be 5 for 3 rows)
+        self.assertEqual(mock_session.execute.call_count, 3)
+
+        self.assertEqual(result["total"], 3)
+        self.assertEqual(len(result["results"]), 3)
+
+        # Comment 1 gets one snippet
+        self.assertEqual(len(result["results"][0]["snippets"]), 1)
+        self.assertEqual(result["results"][0]["snippets"][0]["snippet_type"], "diff_hunk")
+
+        # Comment 2 gets no snippets
+        self.assertEqual(result["results"][1]["snippets"], [])
+
+        # Comment 3 gets one snippet
+        self.assertEqual(len(result["results"][2]["snippets"]), 1)
+        self.assertEqual(result["results"][2]["snippets"][0]["snippet_type"], "blob_excerpt")
 
 
 class TestGetActivityChangesNotAddressedNoInvalidColumn(unittest.TestCase):
