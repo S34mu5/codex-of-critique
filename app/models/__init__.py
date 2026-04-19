@@ -9,6 +9,7 @@ from app.models.sync_state import SyncState
 from app.models.pr_review import PrReview
 from app.models.pr_comment import PrComment
 from app.models.review_request import ReviewRequest
+from app.models.dashboard_setting import DashboardSetting
 
 __all__ = [
     "Base",
@@ -22,4 +23,5 @@ __all__ = [
     "PrReview",
     "PrComment",
     "ReviewRequest",
+    "DashboardSetting",
 ]
