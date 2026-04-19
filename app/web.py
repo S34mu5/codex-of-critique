@@ -9,7 +9,7 @@ from typing import Any, Dict, List, Optional
 import httpx
 import uvicorn
 from croniter import croniter
-from fastapi import FastAPI, Query
+from fastapi import FastAPI, Query, Request
 from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
@@ -1103,6 +1103,58 @@ def activity(
             """), params).fetchall()
             result["comments"] = [_row_to_dict(r) for r in rows]
 
+        # --- Missing required reviewers ---
+        if not category or category == "missing_required_reviewers":
+            rr_row = session.execute(
+                text("SELECT value FROM dashboard_settings WHERE `key` = 'required_reviewers'")
+            ).fetchone()
+            required = json.loads(rr_row[0]) if rr_row else []
+            if required:
+                rr_params = {**params}
+                rr_placeholders = []
+                for i, login in enumerate(required):
+                    key = f"rr_{i}"
+                    rr_params[key] = login
+                    rr_placeholders.append(f":{key}")
+                in_clause = ", ".join(rr_placeholders)
+
+                if category == "missing_required_reviewers":
+                    result["total"] = session.execute(text(f"""
+                        SELECT COUNT(*) FROM pull_requests pr
+                        JOIN repositories rp ON rp.id = pr.repository_id
+                        WHERE pr.state = 'OPEN'
+                          AND NOT EXISTS (
+                            SELECT 1 FROM review_requests rr
+                            WHERE rr.pull_request_id = pr.id
+                              AND rr.requested_reviewer_login IN ({in_clause})
+                          )
+                          AND (:username = '' OR pr.author_login = :username)
+                          {repo_where}
+                    """), rr_params).scalar()
+
+                rows = session.execute(text(f"""
+                    SELECT pr.number AS pr_number, pr.title AS pr_title,
+                           pr.updated_at_github,
+                           pr.author_login AS pr_author,
+                           pr.author_avatar_url AS pr_author_avatar_url,
+                           rp.name AS repo_name, rp.owner AS repo_owner
+                    FROM pull_requests pr
+                    JOIN repositories rp ON rp.id = pr.repository_id
+                    WHERE pr.state = 'OPEN'
+                      AND NOT EXISTS (
+                        SELECT 1 FROM review_requests rr
+                        WHERE rr.pull_request_id = pr.id
+                          AND rr.requested_reviewer_login IN ({in_clause})
+                      )
+                      AND (:username = '' OR pr.author_login = :username)
+                      {repo_where}
+                    ORDER BY pr.updated_at_github DESC
+                    LIMIT :limit OFFSET :offset
+                """), rr_params).fetchall()
+                result["missing_required_reviewers"] = [_row_to_dict(r) for r in rows]
+            else:
+                result["missing_required_reviewers"] = []
+
     return {"username": username, "sections": result, "page": page, "per_page": per_page, "category": category}
 
 
@@ -1117,6 +1169,33 @@ def backfill_mergeable() -> dict:
         return {"status": "error", "message": str(exc)}
     finally:
         gql.close()
+
+
+@app.get("/api/settings")
+def get_settings() -> dict:
+    with SessionLocal() as session:
+        row = session.execute(
+            text("SELECT value FROM dashboard_settings WHERE `key` = 'required_reviewers'")
+        ).fetchone()
+        if row:
+            return {"required_reviewers": json.loads(row[0])}
+        return {"required_reviewers": []}
+
+
+@app.post("/api/settings")
+async def save_settings(request: Request) -> dict:
+    body = await request.json()
+    reviewers = body.get("required_reviewers", [])
+    if not isinstance(reviewers, list) or not all(isinstance(r, str) for r in reviewers):
+        return {"error": "required_reviewers must be a list of strings"}
+    value = json.dumps(reviewers)
+    with SessionLocal() as session:
+        session.execute(text("""
+            INSERT INTO dashboard_settings (`key`, value) VALUES ('required_reviewers', :val)
+            ON DUPLICATE KEY UPDATE value = :val, updated_at = NOW()
+        """), {"val": value})
+        session.commit()
+    return {"required_reviewers": reviewers}
 
 
 def _row_to_dict(row) -> dict:
