@@ -1604,13 +1604,13 @@ footer{display:flex;align-items:center;justify-content:center;gap:16px;font-size
       <div class="settings-user-list" id="mcp-user-list"></div>
     </div>
     <div class="mcp-connection">
-      Endpoint: <span style="color:var(--cyan)">http://localhost:8080/mcp</span>
+      Endpoint: <span style="color:var(--cyan)">http://localhost:8080/mcp/sse</span>
       <div style="margin-top:8px">Claude Code config:</div>
       <code id="mcp-config-snippet">{
   "mcpServers": {
     "codex-of-critique": {
       "type": "sse",
-      "url": "http://localhost:8080/mcp"
+      "url": "http://localhost:8080/mcp/sse"
     }
   }
 }</code>

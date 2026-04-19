@@ -27,7 +27,7 @@ Add this to your Claude Code MCP configuration (`.claude/settings.json` or proje
   "mcpServers": {
     "codex-of-critique": {
       "type": "sse",
-      "url": "http://localhost:8080/mcp"
+      "url": "http://localhost:8080/mcp/sse"
     }
   }
 }
