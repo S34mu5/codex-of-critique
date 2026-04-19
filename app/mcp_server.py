@@ -58,6 +58,7 @@ def _handle_search_reviews(
     pr_author: Optional[str] = None,
     page: int = 1,
     per_page: int = 20,
+    compact: bool = False,
 ) -> dict:
     """Internal handler — builds SQL conditions and returns search results."""
     if reviewers is None:
@@ -149,9 +150,10 @@ def _handle_search_reviews(
         """
         total = session.execute(text(count_sql), params).scalar()
 
+        diff_hunk_col = "" if compact else "rc.diff_hunk,"
         data_sql = f"""
             SELECT rc.id, rc.github_node_id, rc.path, rc.file_extension,
-                   rc.comment_author_login, rc.comment_author_avatar_url, rc.body, rc.diff_hunk,
+                   rc.comment_author_login, rc.comment_author_avatar_url, rc.body, {diff_hunk_col}
                    rc.line, rc.start_line, rc.comment_created_at, rc.comment_commit_oid,
                    pr.number AS pr_number, pr.title AS pr_title,
                    pr.author_login AS pr_author, pr.author_avatar_url AS pr_author_avatar_url,
@@ -170,7 +172,7 @@ def _handle_search_reviews(
         comment_ids = [r["id"] for r in row_dicts]
 
         snippets_by_comment: dict = {}
-        if comment_ids:
+        if not compact and comment_ids:
             placeholders = ",".join(f":cid_{i}" for i in range(len(comment_ids)))
             snippet_params = {f"cid_{i}": cid for i, cid in enumerate(comment_ids)}
             snippet_rows = session.execute(
@@ -186,7 +188,8 @@ def _handle_search_reviews(
                 snippets_by_comment.setdefault(cid, []).append(sm)
 
         for r in row_dicts:
-            r["snippets"] = snippets_by_comment.get(r["id"], [])
+            if not compact:
+                r["snippets"] = snippets_by_comment.get(r["id"], [])
             for k, v in r.items():
                 if isinstance(v, datetime):
                     r[k] = v.isoformat()
@@ -448,6 +451,7 @@ def search_reviews(
     pr_author: Optional[str] = None,
     page: int = 1,
     per_page: int = 20,
+    compact: bool = False,
 ) -> str:
     """Search past code review comments stored in the Codex of Critique database.
 
@@ -462,10 +466,13 @@ def search_reviews(
         pr_author: Filter by PR author GitHub login (exact match).
         page: Page number for pagination (1-based, default 1).
         per_page: Number of results per page (default 20, max 100).
+        compact: When True, omit diff_hunk and code snippets from results to reduce
+            response size. Useful for overview queries where code context is not needed.
 
     Returns:
         JSON string with keys: total, page, per_page, results.
-        Each result contains the review comment, PR metadata, repository info, and snippets.
+        Each result contains the review comment, PR metadata, and repository info.
+        In non-compact mode, results also include diff_hunk and snippets.
     """
     result = _handle_search_reviews(
         comment_q=comment_q,
@@ -477,5 +484,6 @@ def search_reviews(
         pr_author=pr_author,
         page=page,
         per_page=per_page,
+        compact=compact,
     )
     return json.dumps(result)

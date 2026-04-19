@@ -280,7 +280,48 @@ class TestSearchReviewsTool(unittest.TestCase):
             pr_author=None,
             page=1,
             per_page=20,
+            compact=False,
         )
+
+
+class TestSearchReviewsCompactMode(unittest.TestCase):
+    """Verify compact=True omits diff_hunk and snippets."""
+
+    @patch("app.mcp_server.SessionLocal")
+    @patch("app.mcp_server._get_mcp_default_reviewers", return_value=[])
+    def test_compact_omits_diff_hunk_and_snippets(self, _mock_reviewers, mock_session_cls):
+        from app.mcp_server import _handle_search_reviews
+
+        mock_session = MagicMock()
+        mock_session_cls.return_value.__enter__ = MagicMock(return_value=mock_session)
+        mock_session_cls.return_value.__exit__ = MagicMock(return_value=False)
+
+        mock_count = MagicMock()
+        mock_count.scalar.return_value = 1
+
+        fake_row = MagicMock()
+        fake_row._mapping = {
+            "id": 42, "github_node_id": "RC_abc", "path": "src/foo.py",
+            "file_extension": "py", "comment_author_login": "alice",
+            "comment_author_avatar_url": None, "body": "fix this",
+            "line": 10, "start_line": None, "comment_created_at": None,
+            "comment_commit_oid": "abc123", "pr_number": 7, "pr_title": "Refactor",
+            "pr_author": "bob", "pr_author_avatar_url": None,
+            "repo_name": "myrepo", "repo_owner": "myorg",
+        }
+        mock_data = MagicMock()
+        mock_data.fetchall.return_value = [fake_row]
+
+        mock_session.execute.side_effect = [mock_count, mock_data]
+
+        result = _handle_search_reviews(comment_q="fix", compact=True, page=1, per_page=20)
+
+        r = result["results"][0]
+        self.assertNotIn("diff_hunk", r)
+        self.assertNotIn("snippets", r)
+        self.assertEqual(r["body"], "fix this")
+        self.assertEqual(r["pr_title"], "Refactor")
+        self.assertEqual(mock_session.execute.call_count, 2)
 
 
 class TestGetActivity(unittest.TestCase):
