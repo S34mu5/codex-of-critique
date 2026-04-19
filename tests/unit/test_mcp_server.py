@@ -282,5 +282,250 @@ class TestSearchReviewsTool(unittest.TestCase):
         )
 
 
+class TestGetActivity(unittest.TestCase):
+    """Test _handle_get_activity returns sections with correct shape."""
+
+    @patch("app.mcp_server.SessionLocal")
+    def test_get_activity_returns_sections(self, mock_session_cls):
+        from app.mcp_server import _handle_get_activity
+
+        mock_session = MagicMock()
+        mock_session_cls.return_value.__enter__ = MagicMock(return_value=mock_session)
+        mock_session_cls.return_value.__exit__ = MagicMock(return_value=False)
+
+        # Each category does one query; 4 categories → 4 execute() calls
+        fake_row = MagicMock()
+        fake_row._mapping = {
+            "pr_number": 1,
+            "pr_title": "Test PR",
+            "pr_author": "alice",
+            "pr_author_avatar_url": "https://example.com/alice.png",
+            "repo_name": "myrepo",
+            "repo_owner": "myorg",
+        }
+        mock_result = MagicMock()
+        mock_result.fetchall.return_value = [fake_row]
+
+        mock_session.execute.return_value = mock_result
+
+        result = _handle_get_activity()
+
+        self.assertIn("pending_reviews", result)
+        self.assertIn("changes_not_addressed", result)
+        self.assertIn("changes_merged", result)
+        self.assertIn("comments", result)
+        self.assertEqual(result["page"], 1)
+        self.assertEqual(result["per_page"], 20)
+        # Each section got the one fake row
+        self.assertEqual(len(result["pending_reviews"]), 1)
+        self.assertEqual(result["pending_reviews"][0]["pr_number"], 1)
+
+    @patch("app.mcp_server.SessionLocal")
+    def test_get_activity_single_category(self, mock_session_cls):
+        from app.mcp_server import _handle_get_activity
+
+        mock_session = MagicMock()
+        mock_session_cls.return_value.__enter__ = MagicMock(return_value=mock_session)
+        mock_session_cls.return_value.__exit__ = MagicMock(return_value=False)
+
+        mock_result = MagicMock()
+        mock_result.fetchall.return_value = []
+        mock_session.execute.return_value = mock_result
+
+        result = _handle_get_activity(category="comments")
+
+        self.assertIn("comments", result)
+        self.assertNotIn("pending_reviews", result)
+        self.assertNotIn("changes_merged", result)
+
+    @patch("app.mcp_server.SessionLocal")
+    def test_get_activity_pagination_offset(self, mock_session_cls):
+        from app.mcp_server import _handle_get_activity
+
+        mock_session = MagicMock()
+        mock_session_cls.return_value.__enter__ = MagicMock(return_value=mock_session)
+        mock_session_cls.return_value.__exit__ = MagicMock(return_value=False)
+
+        mock_result = MagicMock()
+        mock_result.fetchall.return_value = []
+        mock_session.execute.return_value = mock_result
+
+        _handle_get_activity(category="comments", page=3, per_page=5)
+
+        # The params passed to execute should have offset=10, limit=5
+        call_params = mock_session.execute.call_args_list[0][0][1]
+        self.assertEqual(call_params["offset"], 10)
+        self.assertEqual(call_params["limit"], 5)
+
+
+class TestGetStats(unittest.TestCase):
+    """Test _handle_get_stats returns counts and sync info."""
+
+    @patch("app.mcp_server.SessionLocal")
+    def test_get_stats_returns_counts(self, mock_session_cls):
+        from app.mcp_server import _handle_get_stats
+
+        mock_session = MagicMock()
+        mock_session_cls.return_value.__enter__ = MagicMock(return_value=mock_session)
+        mock_session_cls.return_value.__exit__ = MagicMock(return_value=False)
+
+        # COUNT queries → 5 scalar() calls, then one fetchone() for sync_state
+        mock_session.execute.return_value.scalar.side_effect = [10, 20, 30, 40, 50]
+
+        from datetime import datetime as dt
+        fake_sync = MagicMock()
+        fake_sync.__getitem__ = lambda self, i: [dt(2024, 1, 1, 12, 0, 0), "cursor123"][i]
+        fake_sync[0] = dt(2024, 1, 1, 12, 0, 0)
+        fake_sync[1] = "cursor123"
+        # Make fetchone return a tuple-like object
+        mock_sync_row = (dt(2024, 1, 1, 12, 0, 0), "cursor123")
+        mock_session.execute.return_value.fetchone.return_value = mock_sync_row
+
+        result = _handle_get_stats()
+
+        self.assertIn("counts", result)
+        self.assertIn("sync", result)
+        counts = result["counts"]
+        for table in ["repositories", "pull_requests", "review_comments", "code_snippets", "code_authorship"]:
+            self.assertIn(table, counts)
+
+    @patch("app.mcp_server.SessionLocal")
+    def test_get_stats_no_sync_row(self, mock_session_cls):
+        from app.mcp_server import _handle_get_stats
+
+        mock_session = MagicMock()
+        mock_session_cls.return_value.__enter__ = MagicMock(return_value=mock_session)
+        mock_session_cls.return_value.__exit__ = MagicMock(return_value=False)
+
+        mock_session.execute.return_value.scalar.side_effect = [0, 0, 0, 0, 0]
+        mock_session.execute.return_value.fetchone.return_value = None
+
+        result = _handle_get_stats()
+
+        self.assertEqual(result["sync"], {})
+
+
+class TestGetFilters(unittest.TestCase):
+    """Test _handle_get_filters returns repositories, pr_authors, reviewers."""
+
+    @patch("app.mcp_server.SessionLocal")
+    def test_get_filters_returns_lists(self, mock_session_cls):
+        from app.mcp_server import _handle_get_filters
+
+        mock_session = MagicMock()
+        mock_session_cls.return_value.__enter__ = MagicMock(return_value=mock_session)
+        mock_session_cls.return_value.__exit__ = MagicMock(return_value=False)
+
+        # repos query
+        repo_row = MagicMock()
+        repo_row.owner = "myorg"
+        repo_row.name = "myrepo"
+
+        # pr_authors query
+        author_row = MagicMock()
+        author_row.author_login = "alice"
+        author_row.author_avatar_url = "https://example.com/alice.png"
+
+        # reviewers query
+        reviewer_row = MagicMock()
+        reviewer_row.comment_author_login = "bob"
+        reviewer_row.comment_author_avatar_url = "https://example.com/bob.png"
+
+        mock_repos_result = MagicMock()
+        mock_repos_result.fetchall.return_value = [repo_row]
+        mock_authors_result = MagicMock()
+        mock_authors_result.fetchall.return_value = [author_row]
+        mock_reviewers_result = MagicMock()
+        mock_reviewers_result.fetchall.return_value = [reviewer_row]
+
+        mock_session.execute.side_effect = [
+            mock_repos_result,
+            mock_authors_result,
+            mock_reviewers_result,
+        ]
+
+        result = _handle_get_filters()
+
+        self.assertIn("repositories", result)
+        self.assertIn("pr_authors", result)
+        self.assertIn("reviewers", result)
+
+        self.assertEqual(result["repositories"], ["myorg/myrepo"])
+        self.assertEqual(result["pr_authors"], [{"login": "alice", "avatar_url": "https://example.com/alice.png"}])
+        self.assertEqual(result["reviewers"], [{"login": "bob", "avatar_url": "https://example.com/bob.png"}])
+
+    @patch("app.mcp_server.SessionLocal")
+    def test_get_filters_empty_db(self, mock_session_cls):
+        from app.mcp_server import _handle_get_filters
+
+        mock_session = MagicMock()
+        mock_session_cls.return_value.__enter__ = MagicMock(return_value=mock_session)
+        mock_session_cls.return_value.__exit__ = MagicMock(return_value=False)
+
+        empty_result = MagicMock()
+        empty_result.fetchall.return_value = []
+        mock_session.execute.return_value = empty_result
+
+        result = _handle_get_filters()
+
+        self.assertEqual(result["repositories"], [])
+        self.assertEqual(result["pr_authors"], [])
+        self.assertEqual(result["reviewers"], [])
+
+
+class TestGetActivityTool(unittest.TestCase):
+    """Test the @mcp.tool() decorated get_activity returns valid JSON."""
+
+    @patch("app.mcp_server._handle_get_activity")
+    def test_get_activity_returns_json_string(self, mock_handler):
+        from app.mcp_server import get_activity
+
+        mock_handler.return_value = {
+            "page": 1,
+            "per_page": 20,
+            "pending_reviews": [],
+        }
+
+        result = get_activity()
+        parsed = json.loads(result)
+        self.assertIn("page", parsed)
+        mock_handler.assert_called_once()
+
+
+class TestGetStatsTool(unittest.TestCase):
+    """Test the @mcp.tool() decorated get_stats returns valid JSON."""
+
+    @patch("app.mcp_server._handle_get_stats")
+    def test_get_stats_returns_json_string(self, mock_handler):
+        from app.mcp_server import get_stats
+
+        mock_handler.return_value = {"counts": {}, "sync": {}}
+
+        result = get_stats()
+        parsed = json.loads(result)
+        self.assertIn("counts", parsed)
+        mock_handler.assert_called_once()
+
+
+class TestGetFiltersTool(unittest.TestCase):
+    """Test the @mcp.tool() decorated get_filters returns valid JSON."""
+
+    @patch("app.mcp_server._handle_get_filters")
+    def test_get_filters_returns_json_string(self, mock_handler):
+        from app.mcp_server import get_filters
+
+        mock_handler.return_value = {
+            "repositories": ["myorg/myrepo"],
+            "pr_authors": [],
+            "reviewers": [],
+        }
+
+        result = get_filters()
+        parsed = json.loads(result)
+        self.assertIn("repositories", parsed)
+        self.assertEqual(parsed["repositories"], ["myorg/myrepo"])
+        mock_handler.assert_called_once()
+
+
 if __name__ == "__main__":
     unittest.main()
