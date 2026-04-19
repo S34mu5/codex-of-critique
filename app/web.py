@@ -1174,28 +1174,64 @@ def backfill_mergeable() -> dict:
 @app.get("/api/settings")
 def get_settings() -> dict:
     with SessionLocal() as session:
-        row = session.execute(
-            text("SELECT value FROM dashboard_settings WHERE `key` = 'required_reviewers'")
-        ).fetchone()
-        if row:
-            return {"required_reviewers": json.loads(row[0])}
-        return {"required_reviewers": []}
+        result = {}
+        for key in ("required_reviewers", "mcp_enabled", "mcp_default_reviewers"):
+            row = session.execute(
+                text("SELECT value FROM dashboard_settings WHERE `key` = :key"),
+                {"key": key},
+            ).fetchone()
+            if row:
+                result[key] = json.loads(row[0])
+            else:
+                if key == "mcp_enabled":
+                    result[key] = True
+                elif key == "required_reviewers":
+                    result[key] = []
+                elif key == "mcp_default_reviewers":
+                    result[key] = []
+        return result
 
 
 @app.post("/api/settings")
 async def save_settings(request: Request) -> dict:
     body = await request.json()
-    reviewers = body.get("required_reviewers", [])
-    if not isinstance(reviewers, list) or not all(isinstance(r, str) for r in reviewers):
-        return {"error": "required_reviewers must be a list of strings"}
-    value = json.dumps(reviewers)
+    result = {}
+
     with SessionLocal() as session:
-        session.execute(text("""
-            INSERT INTO dashboard_settings (`key`, value) VALUES ('required_reviewers', :val)
-            ON DUPLICATE KEY UPDATE value = :val, updated_at = NOW()
-        """), {"val": value})
+        # required_reviewers
+        reviewers = body.get("required_reviewers")
+        if reviewers is not None:
+            if not isinstance(reviewers, list) or not all(isinstance(r, str) for r in reviewers):
+                return {"error": "required_reviewers must be a list of strings"}
+            session.execute(text("""
+                INSERT INTO dashboard_settings (`key`, value) VALUES ('required_reviewers', :val)
+                ON DUPLICATE KEY UPDATE value = :val, updated_at = NOW()
+            """), {"val": json.dumps(reviewers)})
+            result["required_reviewers"] = reviewers
+
+        # mcp_enabled
+        mcp_enabled = body.get("mcp_enabled")
+        if mcp_enabled is not None:
+            session.execute(text("""
+                INSERT INTO dashboard_settings (`key`, value) VALUES ('mcp_enabled', :val)
+                ON DUPLICATE KEY UPDATE value = :val, updated_at = NOW()
+            """), {"val": json.dumps(mcp_enabled)})
+            result["mcp_enabled"] = mcp_enabled
+
+        # mcp_default_reviewers
+        mcp_reviewers = body.get("mcp_default_reviewers")
+        if mcp_reviewers is not None:
+            if not isinstance(mcp_reviewers, list) or not all(isinstance(r, str) for r in mcp_reviewers):
+                return {"error": "mcp_default_reviewers must be a list of strings"}
+            session.execute(text("""
+                INSERT INTO dashboard_settings (`key`, value) VALUES ('mcp_default_reviewers', :val)
+                ON DUPLICATE KEY UPDATE value = :val, updated_at = NOW()
+            """), {"val": json.dumps(mcp_reviewers)})
+            result["mcp_default_reviewers"] = mcp_reviewers
+
         session.commit()
-    return {"required_reviewers": reviewers}
+
+    return result
 
 
 def _row_to_dict(row) -> dict:
