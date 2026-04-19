@@ -1260,6 +1260,24 @@ header::after{content:'';position:absolute;top:0;left:0;right:0;height:1px;backg
 /* ---- TABS ---- */
 .tab-bar{display:flex;gap:0;background:linear-gradient(180deg,var(--s1),#0a1420);border-bottom:1px solid var(--border);padding:0 32px;position:relative}
 .tab-bar::after{content:'';position:absolute;bottom:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,#22d3ee20,transparent)}
+.tab-bar-gear{margin-left:auto;display:flex;align-items:center;padding:0 12px;cursor:pointer;color:var(--muted);font-size:18px;transition:color .2s}
+.tab-bar-gear:hover{color:var(--cyan)}
+.settings-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:1000;justify-content:center;align-items:center}
+.settings-overlay.open{display:flex}
+.settings-modal{background:var(--s1);border:1px solid var(--border);border-radius:14px;padding:28px 32px;width:420px;max-width:90vw;max-height:80vh;overflow-y:auto}
+.settings-modal h3{margin:0 0 18px;font-size:15px;font-weight:700;color:var(--text)}
+.settings-tags{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px;min-height:32px}
+.settings-tag{display:flex;align-items:center;gap:6px;background:var(--s2);border:1px solid var(--border);border-radius:6px;padding:4px 10px;font-family:var(--mono);font-size:12px;color:var(--text)}
+.settings-tag .remove{cursor:pointer;color:var(--muted);font-size:14px;line-height:1;transition:color .15s}
+.settings-tag .remove:hover{color:var(--red,#ef4444)}
+.settings-add{display:flex;gap:8px;margin-bottom:20px}
+.settings-add input{flex:1;background:var(--s2);border:1px solid var(--border);color:var(--text);font-family:var(--mono);font-size:12px;padding:8px 12px;border-radius:8px;outline:none}
+.settings-add input:focus{border-color:var(--cyan)}
+.settings-add button{background:var(--cyan);color:var(--bg);font-family:var(--mono);font-weight:700;font-size:12px;border:none;padding:8px 16px;border-radius:8px;cursor:pointer}
+.settings-actions{display:flex;justify-content:flex-end;gap:10px}
+.settings-actions button{font-family:var(--mono);font-size:12px;padding:8px 20px;border-radius:8px;cursor:pointer;border:1px solid var(--border)}
+.settings-actions .btn-save{background:var(--cyan);color:var(--bg);border-color:var(--cyan);font-weight:700}
+.settings-actions .btn-cancel{background:var(--s2);color:var(--text)}
 .tab{padding:12px 24px;font-size:13px;font-weight:600;font-family:var(--mono);color:var(--muted);cursor:pointer;border-bottom:2px solid transparent;transition:all .25s;user-select:none;position:relative}
 .tab:hover{color:var(--text);text-shadow:0 0 20px #22d3ee20}
 .tab.active{color:var(--cyan);border-bottom-color:var(--cyan);text-shadow:0 0 12px #22d3ee40}
@@ -1472,6 +1490,22 @@ footer{display:flex;align-items:center;justify-content:center;gap:16px;font-size
   <div class="tab active" data-tab="dashboard">Dashboard</div>
   <div class="tab" data-tab="search">Search</div>
   <div class="tab" data-tab="activity">Activity</div>
+  <div class="tab-bar-gear" onclick="openSettings()" title="Settings">&#9881;</div>
+</div>
+
+<div class="settings-overlay" id="settings-overlay" onclick="if(event.target===this)closeSettings()">
+  <div class="settings-modal">
+    <h3>Required Reviewers</h3>
+    <div class="settings-tags" id="settings-tags"></div>
+    <div class="settings-add">
+      <input type="text" id="settings-input" placeholder="GitHub username" onkeydown="if(event.key==='Enter')addReviewer()">
+      <button onclick="addReviewer()">Add</button>
+    </div>
+    <div class="settings-actions">
+      <button class="btn-cancel" onclick="closeSettings()">Cancel</button>
+      <button class="btn-save" onclick="saveSettings()">Save</button>
+    </div>
+  </div>
 </div>
 
 <!-- ==================== DASHBOARD TAB ==================== -->
@@ -1708,6 +1742,7 @@ footer{display:flex;align-items:center;justify-content:center;gap:16px;font-size
       <option value="changes_addressed">Changes — Addressed</option>
       <option value="changes_merged">Changes — Merged</option>
       <option value="merge_conflicts">Merge Conflicts</option>
+      <option value="missing_required_reviewers">Missing Required Reviewers</option>
       <option value="comments">Recent Comments</option>
     </select>
     <details class="repo-picker single-picker">
@@ -2524,6 +2559,7 @@ let activityLoaded = false, actPage = 1;
 const ACT_ALL_LIMIT = 10, ACT_PAGE_LIMIT = 50;
 
 const ACT_SECTIONS = [
+  { key: 'missing_required_reviewers', cat: 'missing_required_reviewers', title: 'Missing Required Reviewers' },
   { key: 'pending_reviews',          cat: 'pending_reviews',          title: 'Pending Reviews' },
   { key: 'changes_not_addressed',    cat: 'changes_not_addressed',    title: 'Changes \u2014 Needs Action' },
   { key: 'changes_forgot_rerequest', cat: 'changes_forgot_rerequest', title: 'Changes \u2014 Not Re-requested' },
@@ -2620,6 +2656,8 @@ function renderActivityCard(r, cat) {
   } else if (cat === 'merge_conflicts') {
     style = ' style="border-color:#ef444440"';
     meta = '<span class="ac-meta" style="color:var(--red,#ef4444)">conflict detected ' + relTime(r.mergeable_updated_at) + '</span>';
+  } else if (cat === 'missing_required_reviewers') {
+    meta = '<span class="ac-meta">' + avatarImg(r.pr_author_avatar_url, 14, r.pr_author) + ' @' + esc(r.pr_author || '') + ' \u2014 no required reviewer requested</span>';
   } else {
     meta = '<span class="ac-meta">' + relTime(r.updated_at_github) + '</span>';
   }
@@ -2776,6 +2814,55 @@ function renderResults(d) {
       (hasSnippets ? '<div class="rc-toggle" onclick="toggleSnippets(this)"><span class="chevron">\u25B6</span> Code</div><div class="rc-snippets">' + snippetsHtml + '</div>' : '') +
     '</div>';
   }).join('');
+}
+
+let _settingsReviewers = [];
+
+async function openSettings() {
+  try {
+    const res = await fetch('/api/settings');
+    const d = await res.json();
+    _settingsReviewers = d.required_reviewers || [];
+  } catch (e) { _settingsReviewers = []; }
+  renderSettingsTags();
+  $('settings-overlay').classList.add('open');
+  $('settings-input').focus();
+}
+
+function closeSettings() {
+  $('settings-overlay').classList.remove('open');
+}
+
+function renderSettingsTags() {
+  $('settings-tags').innerHTML = _settingsReviewers.length
+    ? _settingsReviewers.map((u, i) => '<span class="settings-tag">' + esc(u) + '<span class="remove" onclick="removeReviewer(' + i + ')">&times;</span></span>').join('')
+    : '<span style="color:var(--muted);font-size:12px;font-family:var(--mono)">No required reviewers configured</span>';
+}
+
+function addReviewer() {
+  const input = $('settings-input');
+  const val = input.value.trim().replace(/^@/, '');
+  if (!val || _settingsReviewers.includes(val)) { input.value = ''; return; }
+  _settingsReviewers.push(val);
+  input.value = '';
+  renderSettingsTags();
+}
+
+function removeReviewer(idx) {
+  _settingsReviewers.splice(idx, 1);
+  renderSettingsTags();
+}
+
+async function saveSettings() {
+  try {
+    await fetch('/api/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ required_reviewers: _settingsReviewers })
+    });
+  } catch (e) { /* ignore */ }
+  closeSettings();
+  if ($('a-category').value === 'missing_required_reviewers') loadActivity(1);
 }
 </script>
 </body>
