@@ -527,5 +527,26 @@ class TestGetFiltersTool(unittest.TestCase):
         mock_handler.assert_called_once()
 
 
+class TestGetActivityChangesNotAddressedNoInvalidColumn(unittest.TestCase):
+    """Verify that changes_not_addressed query does NOT reference commits_since_last_review."""
+
+    @patch("app.mcp_server.SessionLocal")
+    def test_changes_not_addressed_query_has_no_invalid_column(self, mock_session_cls):
+        from app.mcp_server import _handle_get_activity
+
+        mock_session = MagicMock()
+        mock_session_cls.return_value.__enter__ = MagicMock(return_value=mock_session)
+        mock_session_cls.return_value.__exit__ = MagicMock(return_value=False)
+
+        mock_result = MagicMock()
+        mock_result.fetchall.return_value = []
+        mock_session.execute.return_value = mock_result
+
+        _handle_get_activity(category="changes_not_addressed", page=1, per_page=20)
+
+        executed_sql = mock_session.execute.call_args[0][0].text
+        self.assertNotIn("commits_since_last_review", executed_sql)
+
+
 if __name__ == "__main__":
     unittest.main()

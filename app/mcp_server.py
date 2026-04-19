@@ -297,7 +297,6 @@ def _handle_get_activity(
                     WHERE r3.pull_request_id = rev.pull_request_id AND r3.author_login = rev.author_login
                       AND r3.state = 'APPROVED' AND r3.submitted_at > rev.submitted_at
                   )
-                  AND pr.commits_since_last_review = 0
                 ORDER BY rev.submitted_at DESC
                 LIMIT :limit OFFSET :offset
             """
