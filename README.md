@@ -220,3 +220,11 @@ app/
 ## Environment Variables
 
 See [`.env.example`](.env.example) for all available configuration options.
+
+---
+
+## MCP Server
+
+Codex of Critique includes a built-in MCP server that lets LLMs (like Claude Code) query your review comment database. An LLM can search past review comments by keyword, see code diffs and snippets, and use that institutional knowledge while working on your code.
+
+Enable it from the Settings modal (gear icon), then connect Claude Code by adding the SSE endpoint to your MCP config. See [docs/mcp-server.md](docs/mcp-server.md) for full setup instructions.
