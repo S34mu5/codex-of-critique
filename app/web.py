@@ -1278,6 +1278,12 @@ header::after{content:'';position:absolute;top:0;left:0;right:0;height:1px;backg
 .settings-actions button{font-family:var(--mono);font-size:12px;padding:8px 20px;border-radius:8px;cursor:pointer;border:1px solid var(--border)}
 .settings-actions .btn-save{background:var(--cyan);color:var(--bg);border-color:var(--cyan);font-weight:700}
 .settings-actions .btn-cancel{background:var(--s2);color:var(--text)}
+.settings-user-list{max-height:200px;overflow-y:auto;margin-bottom:16px;border:1px solid var(--border);border-radius:8px;background:var(--s2)}
+.settings-user-list:empty{display:none}
+.settings-user-item{display:flex;align-items:center;gap:10px;padding:8px 12px;cursor:pointer;font-family:var(--mono);font-size:12px;color:var(--text);transition:background .15s}
+.settings-user-item:hover{background:var(--s1)}
+.settings-user-item.selected{opacity:.4;cursor:default}
+.settings-user-item .user-avatar{width:20px;height:20px}
 .tab{padding:12px 24px;font-size:13px;font-weight:600;font-family:var(--mono);color:var(--muted);cursor:pointer;border-bottom:2px solid transparent;transition:all .25s;user-select:none;position:relative}
 .tab:hover{color:var(--text);text-shadow:0 0 20px #22d3ee20}
 .tab.active{color:var(--cyan);border-bottom-color:var(--cyan);text-shadow:0 0 12px #22d3ee40}
@@ -1498,9 +1504,10 @@ footer{display:flex;align-items:center;justify-content:center;gap:16px;font-size
     <h3>Required Reviewers</h3>
     <div class="settings-tags" id="settings-tags"></div>
     <div class="settings-add">
-      <input type="text" id="settings-input" placeholder="GitHub username" onkeydown="if(event.key==='Enter')addReviewer()">
-      <button onclick="addReviewer()">Add</button>
+      <input type="text" id="settings-input" placeholder="Search or add username" oninput="filterSettingsUsers()" onkeydown="if(event.key==='Enter')addReviewerFromInput()">
+      <button onclick="addReviewerFromInput()">Add</button>
     </div>
+    <div class="settings-user-list" id="settings-user-list"></div>
     <div class="settings-actions">
       <button class="btn-cancel" onclick="closeSettings()">Cancel</button>
       <button class="btn-save" onclick="saveSettings()">Save</button>
@@ -2818,6 +2825,21 @@ function renderResults(d) {
 
 let _settingsReviewers = [];
 
+function _allKnownUsers() {
+  const seen = new Set();
+  const users = [];
+  for (const source of ['pr_authors', 'reviewers']) {
+    for (const item of (filterChoices[source] || [])) {
+      const login = typeof item === 'string' ? item : item.login;
+      if (login && !seen.has(login)) {
+        seen.add(login);
+        users.push(login);
+      }
+    }
+  }
+  return users.sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+}
+
 async function openSettings() {
   try {
     const res = await fetch('/api/settings');
@@ -2825,7 +2847,9 @@ async function openSettings() {
     _settingsReviewers = d.required_reviewers || [];
   } catch (e) { _settingsReviewers = []; }
   renderSettingsTags();
+  renderSettingsUserList();
   $('settings-overlay').classList.add('open');
+  $('settings-input').value = '';
   $('settings-input').focus();
 }
 
@@ -2835,22 +2859,49 @@ function closeSettings() {
 
 function renderSettingsTags() {
   $('settings-tags').innerHTML = _settingsReviewers.length
-    ? _settingsReviewers.map((u, i) => '<span class="settings-tag">' + esc(u) + '<span class="remove" onclick="removeReviewer(' + i + ')">&times;</span></span>').join('')
+    ? _settingsReviewers.map((u, i) => {
+        const av = avatarMap[u] ? '<img class="user-avatar" src="' + esc(avatarMap[u]) + '" style="width:16px;height:16px" onerror="this.style.display=\'none\'">' : '';
+        return '<span class="settings-tag">' + av + esc(u) + '<span class="remove" onclick="removeReviewer(' + i + ')">&times;</span></span>';
+      }).join('')
     : '<span style="color:var(--muted);font-size:12px;font-family:var(--mono)">No required reviewers configured</span>';
 }
 
-function addReviewer() {
+function renderSettingsUserList(filter) {
+  const q = (filter || '').toLowerCase();
+  const users = _allKnownUsers().filter(u => !q || u.toLowerCase().includes(q));
+  $('settings-user-list').innerHTML = users.map(u => {
+    const selected = _settingsReviewers.includes(u);
+    const av = avatarMap[u] ? '<img class="user-avatar" src="' + esc(avatarMap[u]) + '" onerror="this.style.display=\'none\'">' : '';
+    return '<div class="settings-user-item' + (selected ? ' selected' : '') + '" onclick="toggleReviewer(\'' + esc(u) + '\')">' + av + '<span>' + esc(u) + '</span>' + (selected ? '<span style="margin-left:auto;color:var(--cyan);font-size:10px">&#10003;</span>' : '') + '</div>';
+  }).join('');
+}
+
+function filterSettingsUsers() {
+  renderSettingsUserList($('settings-input').value.trim());
+}
+
+function toggleReviewer(login) {
+  const idx = _settingsReviewers.indexOf(login);
+  if (idx >= 0) _settingsReviewers.splice(idx, 1);
+  else _settingsReviewers.push(login);
+  renderSettingsTags();
+  renderSettingsUserList($('settings-input').value.trim());
+}
+
+function addReviewerFromInput() {
   const input = $('settings-input');
   const val = input.value.trim().replace(/^@/, '');
   if (!val || _settingsReviewers.includes(val)) { input.value = ''; return; }
   _settingsReviewers.push(val);
   input.value = '';
   renderSettingsTags();
+  renderSettingsUserList();
 }
 
 function removeReviewer(idx) {
   _settingsReviewers.splice(idx, 1);
   renderSettingsTags();
+  renderSettingsUserList($('settings-input').value.trim());
 }
 
 async function saveSettings() {
