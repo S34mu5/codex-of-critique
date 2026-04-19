@@ -1354,6 +1354,14 @@ header::after{content:'';position:absolute;top:0;left:0;right:0;height:1px;backg
 .settings-user-list:empty{display:none}
 .settings-user-item{display:flex;align-items:center;gap:10px;padding:8px 12px;cursor:pointer;font-family:var(--mono);font-size:12px;color:var(--text);transition:background .15s}
 .settings-user-item:hover{background:var(--s1)}
+.settings-divider{border:0;border-top:1px solid var(--border);margin:20px 0}
+.mcp-toggle{display:flex;align-items:center;gap:10px;margin-bottom:14px}
+.mcp-toggle label{font-size:13px;font-family:var(--mono);color:var(--text)}
+.mcp-toggle input[type="checkbox"]{accent-color:var(--cyan);width:16px;height:16px}
+.mcp-connection{background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:12px;margin-top:12px;font-family:var(--mono);font-size:11px;color:var(--muted)}
+.mcp-connection code{color:var(--cyan);display:block;margin-top:6px;white-space:pre;font-size:10px}
+.mcp-copy-btn{font-size:10px;background:var(--s2);border:1px solid var(--border);color:var(--text);padding:4px 10px;border-radius:4px;cursor:pointer;margin-top:6px;font-family:var(--mono)}
+.mcp-copy-btn:hover{background:var(--border)}
 .settings-user-item.selected{opacity:.4;cursor:default}
 .settings-user-item .user-avatar{width:20px;height:20px}
 .tab{padding:12px 24px;font-size:13px;font-weight:600;font-family:var(--mono);color:var(--muted);cursor:pointer;border-bottom:2px solid transparent;transition:all .25s;user-select:none;position:relative}
@@ -1580,6 +1588,34 @@ footer{display:flex;align-items:center;justify-content:center;gap:16px;font-size
       <button onclick="addReviewerFromInput()">Add</button>
     </div>
     <div class="settings-user-list" id="settings-user-list"></div>
+    <hr class="settings-divider">
+    <h3>MCP Server</h3>
+    <div class="mcp-toggle">
+      <input type="checkbox" id="mcp-enabled" onchange="onMcpToggle()">
+      <label for="mcp-enabled">Enable MCP server endpoint</label>
+    </div>
+    <div id="mcp-reviewers-section">
+      <div style="font-size:12px;color:var(--muted);font-family:var(--mono);margin-bottom:8px">Default reviewers for search (leave empty to use Required Reviewers above)</div>
+      <div class="settings-tags" id="mcp-reviewers-tags"></div>
+      <div class="settings-add">
+        <input type="text" id="mcp-reviewers-input" placeholder="Search or add username" oninput="filterMcpReviewers()" onkeydown="if(event.key==='Enter')addMcpReviewerFromInput()">
+        <button onclick="addMcpReviewerFromInput()">Add</button>
+      </div>
+      <div class="settings-user-list" id="mcp-user-list"></div>
+    </div>
+    <div class="mcp-connection">
+      Endpoint: <span style="color:var(--cyan)">http://localhost:8080/mcp</span>
+      <div style="margin-top:8px">Claude Code config:</div>
+      <code id="mcp-config-snippet">{
+  "mcpServers": {
+    "codex-of-critique": {
+      "type": "sse",
+      "url": "http://localhost:8080/mcp"
+    }
+  }
+}</code>
+      <button class="mcp-copy-btn" onclick="copyMcpConfig()">Copy config</button>
+    </div>
     <div class="settings-actions">
       <button class="btn-cancel" onclick="closeSettings()">Cancel</button>
       <button class="btn-save" onclick="saveSettings()">Save</button>
@@ -2896,6 +2932,8 @@ function renderResults(d) {
 }
 
 let _settingsReviewers = [];
+let _mcpEnabled = true;
+let _mcpReviewers = [];
 
 function _allKnownUsers() {
   const seen = new Set();
@@ -2917,9 +2955,18 @@ async function openSettings() {
     const res = await fetch('/api/settings');
     const d = await res.json();
     _settingsReviewers = d.required_reviewers || [];
-  } catch (e) { _settingsReviewers = []; }
+    _mcpEnabled = d.mcp_enabled !== false;
+    _mcpReviewers = d.mcp_default_reviewers || [];
+  } catch (e) {
+    _settingsReviewers = [];
+    _mcpEnabled = true;
+    _mcpReviewers = [];
+  }
   renderSettingsTags();
   renderSettingsUserList();
+  $('mcp-enabled').checked = _mcpEnabled;
+  renderMcpReviewersTags();
+  renderMcpUserList();
   $('settings-overlay').classList.add('open');
   $('settings-input').value = '';
   $('settings-input').focus();
@@ -2981,11 +3028,75 @@ async function saveSettings() {
     await fetch('/api/settings', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ required_reviewers: _settingsReviewers })
+      body: JSON.stringify({
+        required_reviewers: _settingsReviewers,
+        mcp_enabled: _mcpEnabled,
+        mcp_default_reviewers: _mcpReviewers,
+      })
     });
   } catch (e) { /* ignore */ }
   closeSettings();
   if ($('a-category').value === 'missing_required_reviewers') loadActivity(1);
+}
+
+function onMcpToggle() {
+  _mcpEnabled = $('mcp-enabled').checked;
+}
+
+function renderMcpReviewersTags() {
+  $('mcp-reviewers-tags').innerHTML = _mcpReviewers.length
+    ? _mcpReviewers.map((u, i) => {
+        const av = avatarMap[u] ? '<img class="user-avatar" src="' + esc(avatarMap[u]) + '" style="width:16px;height:16px" onerror="this.style.display=\'none\'">' : '';
+        return '<span class="settings-tag">' + av + esc(u) + '<span class="remove" onclick="removeMcpReviewer(' + i + ')">&times;</span></span>';
+      }).join('')
+    : '<span style="color:var(--muted);font-size:12px;font-family:var(--mono)">Using required reviewers above</span>';
+}
+
+function renderMcpUserList(filter) {
+  const q = (filter || '').toLowerCase();
+  const users = _allKnownUsers().filter(u => !q || u.toLowerCase().includes(q));
+  $('mcp-user-list').innerHTML = users.map(u => {
+    const selected = _mcpReviewers.includes(u);
+    const av = avatarMap[u] ? '<img class="user-avatar" src="' + esc(avatarMap[u]) + '" onerror="this.style.display=\'none\'">' : '';
+    return '<div class="settings-user-item' + (selected ? ' selected' : '') + '" onclick="toggleMcpReviewer(\'' + esc(u) + '\')">' + av + '<span>' + esc(u) + '</span>' + (selected ? '<span style="margin-left:auto;color:var(--cyan);font-size:10px">&#10003;</span>' : '') + '</div>';
+  }).join('');
+}
+
+function filterMcpReviewers() {
+  renderMcpUserList($('mcp-reviewers-input').value.trim());
+}
+
+function toggleMcpReviewer(login) {
+  const idx = _mcpReviewers.indexOf(login);
+  if (idx >= 0) _mcpReviewers.splice(idx, 1);
+  else _mcpReviewers.push(login);
+  renderMcpReviewersTags();
+  renderMcpUserList($('mcp-reviewers-input').value.trim());
+}
+
+function addMcpReviewerFromInput() {
+  const input = $('mcp-reviewers-input');
+  const val = input.value.trim().replace(/^@/, '');
+  if (!val || _mcpReviewers.includes(val)) { input.value = ''; return; }
+  _mcpReviewers.push(val);
+  input.value = '';
+  renderMcpReviewersTags();
+  renderMcpUserList();
+}
+
+function removeMcpReviewer(idx) {
+  _mcpReviewers.splice(idx, 1);
+  renderMcpReviewersTags();
+  renderMcpUserList($('mcp-reviewers-input').value.trim());
+}
+
+function copyMcpConfig() {
+  const text = $('mcp-config-snippet').textContent;
+  navigator.clipboard.writeText(text).then(() => {
+    const btn = document.querySelector('.mcp-copy-btn');
+    btn.textContent = 'Copied!';
+    setTimeout(() => btn.textContent = 'Copy config', 2000);
+  });
 }
 </script>
 </body>
