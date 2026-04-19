@@ -679,5 +679,40 @@ class TestGetActivityChangesNotAddressedNoInvalidColumn(unittest.TestCase):
         self.assertNotIn("commits_since_last_review", executed_sql)
 
 
+class TestTruncateDiffHunk(unittest.TestCase):
+    """Verify diff_hunk truncation keeps ~50 lines centered on the comment."""
+
+    def test_short_hunk_unchanged(self):
+        from app.mcp_server import _truncate_diff_hunk
+
+        hunk = "\n".join(f"line {i}" for i in range(30))
+        result = _truncate_diff_hunk(hunk, comment_line=10)
+        self.assertEqual(result, hunk)
+
+    def test_long_hunk_truncated(self):
+        from app.mcp_server import _truncate_diff_hunk
+
+        lines = [f"line {i}" for i in range(200)]
+        hunk = "\n".join(lines)
+        result = _truncate_diff_hunk(hunk, comment_line=100, max_lines=50)
+        result_lines = result.split("\n")
+        self.assertLessEqual(len(result_lines), 50)
+
+    def test_none_hunk_returns_none(self):
+        from app.mcp_server import _truncate_diff_hunk
+
+        self.assertIsNone(_truncate_diff_hunk(None, comment_line=5))
+
+    def test_no_comment_line_takes_tail(self):
+        from app.mcp_server import _truncate_diff_hunk
+
+        lines = [f"line {i}" for i in range(200)]
+        hunk = "\n".join(lines)
+        result = _truncate_diff_hunk(hunk, comment_line=None, max_lines=50)
+        result_lines = result.split("\n")
+        self.assertLessEqual(len(result_lines), 50)
+        self.assertIn("line 199", result_lines[-1])
+
+
 if __name__ == "__main__":
     unittest.main()

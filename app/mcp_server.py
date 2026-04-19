@@ -19,6 +19,29 @@ mcp = FastMCP(
     ),
 )
 
+_MAX_DIFF_HUNK_LINES = 50
+
+
+def _truncate_diff_hunk(
+    hunk: Optional[str], comment_line: Optional[int], max_lines: int = _MAX_DIFF_HUNK_LINES
+) -> Optional[str]:
+    if hunk is None:
+        return None
+    lines = hunk.split("\n")
+    if len(lines) <= max_lines:
+        return hunk
+    if comment_line is not None:
+        center = min(comment_line, len(lines) - 1)
+    else:
+        center = len(lines) - 1
+    half = max_lines // 2
+    start = max(0, center - half)
+    end = start + max_lines
+    if end > len(lines):
+        end = len(lines)
+        start = max(0, end - max_lines)
+    return "\n".join(lines[start:end])
+
 
 def _get_setting(key: str) -> Optional[str]:
     """Read a value from the dashboard_settings table by key. Returns None if not found."""
@@ -190,6 +213,8 @@ def _handle_search_reviews(
         for r in row_dicts:
             if not compact:
                 r["snippets"] = snippets_by_comment.get(r["id"], [])
+                if "diff_hunk" in r:
+                    r["diff_hunk"] = _truncate_diff_hunk(r["diff_hunk"], r.get("line"))
             for k, v in r.items():
                 if isinstance(v, datetime):
                     r[k] = v.isoformat()
