@@ -347,12 +347,13 @@ def _handle_get_stats() -> dict:
         for table in ["repositories", "pull_requests", "review_comments", "code_snippets", "code_authorship"]:
             counts[table] = session.execute(text(f"SELECT COUNT(*) FROM {table}")).scalar()
         sync_row = session.execute(text(
-            "SELECT last_synced_at, cursor_value FROM sync_state ORDER BY last_synced_at DESC LIMIT 1"
+            "SELECT last_success_at, last_error_at, last_error_message FROM sync_state ORDER BY last_success_at DESC LIMIT 1"
         )).fetchone()
         sync_info = {}
         if sync_row:
-            sync_info["last_synced_at"] = sync_row[0].isoformat() if sync_row[0] else None
-            sync_info["cursor_value"] = sync_row[1]
+            sync_info["last_success_at"] = sync_row[0].isoformat() if sync_row[0] else None
+            sync_info["last_error_at"] = sync_row[1].isoformat() if sync_row[1] else None
+            sync_info["last_error_message"] = sync_row[2]
     return {"counts": counts, "sync": sync_info}
 
 
