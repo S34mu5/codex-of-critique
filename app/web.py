@@ -1305,19 +1305,23 @@ header::after{content:'';position:absolute;top:0;left:0;right:0;height:1px;backg
 .pagination button:hover:not(:disabled){border-color:var(--cyan)}
 
 /* Review comment card */
-.rc-card{background:linear-gradient(160deg,var(--s1) 0%,#0e1e33 100%);border:1px solid var(--border);border-radius:12px;margin-bottom:14px;overflow:hidden;transition:border-color .25s,box-shadow .25s,transform .15s}
+.rc-card{background:linear-gradient(160deg,var(--s1) 0%,#0e1e33 100%);border:1px solid var(--border);border-radius:12px;margin-bottom:10px;overflow:hidden;transition:border-color .25s,box-shadow .25s,transform .15s}
 .rc-card:hover{border-color:#3b82f650;box-shadow:0 4px 16px #3b82f610;transform:translateY(-1px)}
-.rc-head{display:flex;align-items:center;gap:10px;padding:14px 18px;border-bottom:1px solid var(--border);flex-wrap:wrap}
-.rc-avatar{width:28px;height:28px;border-radius:50%;background:var(--s2);display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;color:var(--cyan);flex-shrink:0}
-.rc-author{font-weight:600;font-size:13px}
-.rc-pr-badge{font-family:var(--mono);font-size:11px;color:var(--cyan);background:#22d3ee10;border:1px solid #22d3ee30;padding:2px 8px;border-radius:4px}
-.rc-repo-badge{font-family:var(--mono);font-size:10px;color:var(--muted);background:#0f1c2d;border:1px solid var(--border);padding:2px 8px;border-radius:4px}
-.rc-pr-title{font-size:11px;color:var(--muted);flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:100px}
-.rc-time{font-family:var(--mono);font-size:10px;color:var(--muted);margin-left:auto;white-space:nowrap}
-.rc-path{padding:10px 18px;font-family:var(--mono);font-size:11px;color:var(--muted);border-bottom:1px solid var(--border);display:flex;align-items:center;gap:6px;background:var(--s2)}
+.rc-head{display:flex;align-items:center;gap:14px;padding:14px 18px;flex-wrap:nowrap}
+.rc-head .ac-repo{font-size:10px;color:var(--muted);font-family:var(--mono);white-space:nowrap}
+.rc-head .ac-pr{font-family:var(--mono);font-size:12px;color:var(--cyan);white-space:nowrap}
+.rc-head .ac-title{font-size:13px;font-weight:500;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rc-head .ac-meta{font-size:11px;color:var(--muted);font-family:var(--mono);white-space:nowrap}
+.rc-path{padding:10px 18px;font-family:var(--mono);font-size:11px;color:var(--muted);border-top:1px solid var(--border);border-bottom:1px solid var(--border);display:flex;align-items:center;gap:6px;background:var(--s2)}
 .rc-path .icon{color:var(--blue)}
 .rc-path .line-badge{background:var(--blue);color:var(--bg);font-size:10px;font-weight:700;padding:1px 6px;border-radius:3px;margin-left:auto}
 .rc-body{padding:16px 18px;font-size:13px;line-height:1.65;white-space:pre-wrap;word-break:break-word}
+.rc-toggle{display:flex;align-items:center;gap:8px;padding:8px 18px;border-top:1px solid var(--border);cursor:pointer;font-family:var(--mono);font-size:11px;color:var(--muted);background:var(--s2);user-select:none;transition:color .2s}
+.rc-toggle:hover{color:var(--cyan)}
+.rc-toggle .chevron{display:inline-block;transition:transform .25s;font-size:10px}
+.rc-toggle.open .chevron{transform:rotate(90deg)}
+.rc-snippets{display:none}
+.rc-snippets.open{display:block}
 
 /* Diff hunk (GitHub-style) */
 .diff-block{border-top:1px solid var(--border);background:var(--code-bg);overflow-x:auto;font-family:var(--mono);font-size:11px;line-height:1.7}
@@ -2639,6 +2643,11 @@ async function doSearch(page) {
   btn.disabled = false; btn.textContent = 'Search';
 }
 
+function toggleSnippets(el) {
+  el.classList.toggle('open');
+  el.nextElementSibling.classList.toggle('open');
+}
+
 function renderDiff(hunk) {
   if (!hunk) return '';
   const lines = hunk.split('\n').map(l => {
@@ -2667,29 +2676,25 @@ function renderResults(d) {
     return;
   }
 
-  $('search-results').innerHTML = d.results.map(r => {
-    const initials = (r.comment_author_login || '?').substring(0, 2).toUpperCase();
+  $('search-results').innerHTML = d.results.map((r, idx) => {
     const lineInfo = r.line ? (r.start_line && r.start_line !== r.line ? 'L' + r.start_line + '-L' + r.line : 'L' + r.line) : '';
 
     let snippetsHtml = '';
     if (r.diff_hunk) snippetsHtml += renderDiff(r.diff_hunk);
     if (r.snippets) r.snippets.forEach(s => { snippetsHtml += renderSnippet(s); });
+    const hasSnippets = !!snippetsHtml;
 
     return '<div class="rc-card">' +
-      '<div class="rc-head">' +
-        (r.comment_author_avatar_url
-          ? '<img class="user-avatar" src="' + esc(r.comment_author_avatar_url) + '" style="width:28px;height:28px" onerror="this.style.display=\'none\';this.nextElementSibling.style.display=\'flex\'">' +
-            '<div class="rc-avatar" style="display:none">' + esc(initials) + '</div>'
-          : '<div class="rc-avatar">' + esc(initials) + '</div>') +
-        '<span class="rc-author">' + esc(r.comment_author_login || '\u2014') + '</span>' +
-        '<span class="rc-repo-badge">' + esc(r.repo_owner + '/' + r.repo_name) + '</span>' +
-        '<span class="rc-pr-badge">#' + r.pr_number + '</span>' +
-        '<span class="rc-pr-title">' + esc(r.pr_title) + '</span>' +
-        '<span class="rc-time">' + relTime(r.comment_created_at) + '</span>' +
-      '</div>' +
+      '<a class="rc-head" href="' + ghUrl(r.repo_owner, r.repo_name, r.pr_number) + '" target="_blank" style="text-decoration:none;color:inherit">' +
+        avatarImg(r.pr_author_avatar_url, 16, r.pr_author) +
+        '<span class="ac-repo">' + esc(r.repo_owner + '/' + r.repo_name) + '</span>' +
+        '<span class="ac-pr">#' + r.pr_number + '</span>' +
+        '<span class="ac-title">' + esc(r.pr_title) + '</span>' +
+        '<span class="ac-meta">' + avatarImg(r.comment_author_avatar_url, 14, r.comment_author_login) + ' @' + esc(r.comment_author_login || '\u2014') + ' commented on ' + avatarImg(r.pr_author_avatar_url, 14, r.pr_author) + ' @' + esc(r.pr_author || '') + ' \u2014 ' + relTime(r.comment_created_at) + '</span>' +
+      '</a>' +
       (r.path ? '<div class="rc-path"><span class="icon">\uD83D\uDCC1</span> ' + esc(r.path) + (lineInfo ? '<span class="line-badge">' + lineInfo + '</span>' : '') + '</div>' : '') +
       '<div class="rc-body">' + esc(r.body || '') + '</div>' +
-      snippetsHtml +
+      (hasSnippets ? '<div class="rc-toggle" onclick="toggleSnippets(this)"><span class="chevron">\u25B6</span> Code</div><div class="rc-snippets">' + snippetsHtml + '</div>' : '') +
     '</div>';
   }).join('');
 }
