@@ -22,6 +22,42 @@ from app.clients.github_graphql import GitHubGraphQLClient
 
 app = FastAPI(title="Codex-of-Critique Dashboard")
 
+# --- MCP Server mounting ---
+try:
+    from app.mcp_server import mcp as _mcp_server
+
+    def _is_mcp_enabled() -> bool:
+        try:
+            with SessionLocal() as session:
+                row = session.execute(
+                    text("SELECT value FROM dashboard_settings WHERE `key` = 'mcp_enabled'")
+                ).fetchone()
+                if row:
+                    return json.loads(row[0]) is True
+                return True  # default enabled
+        except Exception:
+            return True
+
+    from starlette.middleware.base import BaseHTTPMiddleware
+    from starlette.responses import JSONResponse as StarletteJSONResponse
+
+    class McpGuardMiddleware(BaseHTTPMiddleware):
+        async def dispatch(self, request, call_next):
+            if request.url.path.startswith("/mcp"):
+                if not _is_mcp_enabled():
+                    return StarletteJSONResponse(
+                        status_code=404,
+                        content={"detail": "MCP server is disabled"},
+                    )
+            return await call_next(request)
+
+    app.add_middleware(McpGuardMiddleware)
+    _mcp_app = _mcp_server.streamable_http_app()
+    app.mount("/mcp", _mcp_app)
+    _MCP_AVAILABLE = True
+except ImportError:
+    _MCP_AVAILABLE = False
+
 _gh_cache: dict = {"total_prs": None, "cached_at": 0}
 _GH_CACHE_TTL = 600
 _sync_lock = threading.Lock()

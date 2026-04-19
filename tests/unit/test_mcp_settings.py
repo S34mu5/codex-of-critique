@@ -219,5 +219,30 @@ class TestPostSettingsAllFields(unittest.TestCase):
         self.assertNotIn("mcp_default_reviewers", data)
 
 
+class TestMcpMiddlewareGuard(unittest.TestCase):
+    @patch("app.web.SessionLocal")
+    def test_mcp_disabled_returns_404(self, mock_session_cls):
+        from app.web import app
+        client = TestClient(app)
+
+        mock_session = MagicMock()
+        mock_session_cls.return_value.__enter__ = MagicMock(return_value=mock_session)
+        mock_session_cls.return_value.__exit__ = MagicMock(return_value=False)
+
+        def mock_execute(sql, params=None):
+            result = MagicMock()
+            sql_text = str(sql.text) if hasattr(sql, 'text') else str(sql)
+            if "mcp_enabled" in sql_text:
+                result.fetchone.return_value = ('"false"',)  # JSON false stored as string
+            else:
+                result.fetchone.return_value = None
+            return result
+
+        mock_session.execute.side_effect = mock_execute
+
+        resp = client.get("/mcp")
+        self.assertEqual(resp.status_code, 404)
+
+
 if __name__ == "__main__":
     unittest.main()
